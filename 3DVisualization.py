@@ -1,6 +1,5 @@
 import numpy as np
-import plotly.graph_objs as go
-import plotly.io as pio
+import open3d as o3d
 import matplotlib.pyplot as plt
 
 
@@ -33,9 +32,9 @@ def get_label_colors(sem_labels):
     return colors
 
 
-def voxelize_point_cloud(point_cloud, voxel_size=10):
-    # Calculate the voxel grid coordinates
-    voxel_indices = np.floor(point_cloud[:, :3] / voxel_size).astype(int)
+def voxelize_point_cloud_2d(point_cloud, voxel_size=10):
+    # Calculate the 2D voxel grid coordinates (considering only x and y)
+    voxel_indices = np.floor(point_cloud[:, :2] / voxel_size).astype(int)
 
     # Create unique voxel indices
     unique_voxel_indices = np.unique(voxel_indices, axis=0)
@@ -48,7 +47,7 @@ def voxelize_point_cloud(point_cloud, voxel_size=10):
     return voxel_labels
 
 
-def visualize_with_plotly(point_cloud, sem_labels, voxel_labels=None, selected_voxels=None):
+def visualize_with_open3d(point_cloud, sem_labels, voxel_labels=None, selected_voxels=None):
     # Get the original label colors
     label_colors = get_label_colors(sem_labels)
 
@@ -59,33 +58,18 @@ def visualize_with_plotly(point_cloud, sem_labels, voxel_labels=None, selected_v
     else:
         adjusted_colors = label_colors
 
-    # Convert colors to the "rgb(r, g, b)" format expected by Plotly
-    color_strings = ['rgb({}, {}, {})'.format(int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)) for c in
-                     adjusted_colors]
+    # Create Open3D point cloud object
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_cloud[:, :3])
+    pcd.colors = o3d.utility.Vector3dVector(adjusted_colors)
 
-    trace = go.Scatter3d(
-        x=point_cloud[:, 0],
-        y=point_cloud[:, 1],
-        z=point_cloud[:, 2],
-        mode='markers',
-        marker=dict(
-            size=2,
-            color=color_strings,
-            opacity=0.8  # Keep a fixed opacity since we cannot use arrays here
-        )
-    )
-
-    layout = go.Layout(
-        margin=dict(l=0, r=0, b=0, t=0)
-    )
-
-    fig = go.Figure(data=[trace], layout=layout)
-    pio.show(fig)
+    # Visualize
+    o3d.visualization.draw_geometries([pcd])
 
 
 # Example usage
-point_cloud_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/lidar/val/2022-07-22_flight/2022-07-22_flight__0071_1658494234334310308_vls128.bin'
-label_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/labels/val/2022-07-22_flight/2022-07-22_flight__0071_1658494234334310308_goose.label'
+point_cloud_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/lidar/val/2022-12-07_aying_hills//2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
+label_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
 
 # Load the point cloud data
 point_cloud = load_point_cloud(point_cloud_path)
@@ -94,9 +78,8 @@ point_cloud = load_point_cloud(point_cloud_path)
 sem_labels, inst_labels = load_label(label_path)
 
 # Voxelize the point cloud
-voxel_labels = voxelize_point_cloud(point_cloud, voxel_size=100)
+voxel_labels = voxelize_point_cloud_2d(point_cloud, voxel_size=50)
 
 # Visualize only certain voxels, for example voxels with indices 1 and 2
-selected_voxels = list(range(1, 10))
-visualize_with_plotly(point_cloud, sem_labels, voxel_labels=voxel_labels, selected_voxels=selected_voxels)
-
+selected_voxels = list(range(5, 10))
+visualize_with_open3d(point_cloud, sem_labels, voxel_labels=voxel_labels, selected_voxels=selected_voxels)
