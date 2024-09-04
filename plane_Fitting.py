@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 import open3d as o3d
-
+import random
+import matplotlib.pyplot as plt
+import os
+import subprocess
 
 
 def load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file, lidar_suffix='vls128', label_suffix='goose'):
@@ -27,16 +30,17 @@ def load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file, lidar_su
 
     return lidar_data, labels, label_metadata
 
-# The following paths require the "testing data" to be at the same level as the script
-prefix = '2022-07-22_flight__0071_1658494234334310308'
-lidar_dir = 'goose_3d_val/lidar/val/2022-07-22_flight'
-labels_dir = 'goose_3d_val/labels/val/2022-07-22_flight'
-csv_file = 'goose_3d_val/goose_label_mapping.csv'
 
-lidar_data, labels, label_metadata = load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
+def random_hex_color():
+    """
+    Generate a random hex color string.
+
+    :return: A random hex color string (e.g., '#ff0000').
+    """
+    return f"#{random.randint(0, 0xFFFFFF):06x}"
 
 
-def visualize_selected_points(lidar_data, labels, label_metadata, plane=None):
+def visualize_selected_points(lidar_data, labels, label_metadata=None, plane=None):
     """
     Visualize the point cloud data with the given labels and an optional plane.
 
@@ -46,12 +50,21 @@ def visualize_selected_points(lidar_data, labels, label_metadata, plane=None):
     :param plane: Optional. A tuple (a, b, c, d) representing the plane equation ax + by + cz + d = 0.
     """
     # Convert label keys to RGB colors
-    label_to_color = dict(zip(label_metadata['label_key'], label_metadata['hex']))
+    if label_metadata is not None:
+        label_to_color = dict(
+            zip(label_metadata['label_key'], label_metadata['hex']))
+    else:
+        label_to_color = {}
+        unique_labels = np.unique(labels)
+        for label in unique_labels:
+            label_to_color[label] = random_hex_color()
 
     # Create colors array by mapping labels to their corresponding colors
-    colors = np.array([hex_to_rgb(label_to_color.get(label, '#000000')) for label in labels])
+    colors = np.array(
+        [hex_to_rgb(label_to_color.get(label, '#000000')) for label in labels])
 
-    assert len(lidar_data) == len(colors), "Number of points and colors do not match"
+    assert len(lidar_data) == len(
+        colors), "Number of points and colors do not match"
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(lidar_data[:, :3])
@@ -112,7 +125,8 @@ def create_plane_mesh(plane, points):
     for i in range(19):
         for j in range(19):
             triangles.append([i * 20 + j, i * 20 + j + 1, (i + 1) * 20 + j])
-            triangles.append([i * 20 + j + 1, (i + 1) * 20 + j + 1, (i + 1) * 20 + j])
+            triangles.append([i * 20 + j + 1, (i + 1) *
+                             20 + j + 1, (i + 1) * 20 + j])
     mesh.triangles = o3d.utility.Vector3iVector(np.array(triangles))
 
     # Compute vertex normals for shading
@@ -123,13 +137,6 @@ def create_plane_mesh(plane, points):
 
     return mesh
 
-# Create a dictionary to map label_key to class_name
-label_to_class = dict(zip(label_metadata['label_key'], label_metadata['class_name']))
-
-# Map each label to its class name
-mapped_labels = [label_to_class.get(label, 'Unknown') for label in labels]
-
-[print(f"Point {i}: {lidar_data[i]} -> Class: {mapped_labels[i]}") for i in range(5)]
 
 def calculate_label_distribution(labels, label_metadata):
     """
@@ -155,8 +162,6 @@ def calculate_label_distribution(labels, label_metadata):
     return label_distribution
 
 
-print(calculate_label_distribution(labels, label_metadata).head(10))
-
 def extract_selected_points(lidar_data, labels, bbox_min, bbox_max):
     """
     Extract points within a bounding box.
@@ -180,14 +185,6 @@ def extract_selected_points(lidar_data, labels, bbox_min, bbox_max):
     print(f"Number of points in the bounding box: {len(selected_points)}")
 
     return selected_points, selected_labels
-
-bbox_min = [2, 0, -4]  # Define the minimum x, y, z coordinates of the bounding box
-bbox_max = [8, 6, 0]  # Define the maximum x, y, z coordinates of the bounding box
-
-selected_points, selected_labels = extract_selected_points(lidar_data, labels, bbox_min, bbox_max)
-
-
-
 
 
 def filter_labels(lidar_data, labels, keep_labels):
@@ -216,22 +213,15 @@ def filter_labels(lidar_data, labels, keep_labels):
     return filtered_lidar_data, filtered_labels
 
 
-keep_labels = [23]  # 50 = Low grass
-
-filtered_points, filtered_labels = filter_labels(selected_points, selected_labels, keep_labels)
-
-print(f"Original number of points: {len(selected_points)}")
-print(f"Filtered number of points: {len(filtered_points)}")
-print(f"Filtered labels: {np.unique(filtered_labels)}")
-
-
 def fit_plane_least_squares(points):
     """
-    Fit a plane to a set of 3D points using the least squares method.
+    Fit a plane to a set of 3D points using the least squares method and compute the average residual.
 
     :param points: numpy array of shape (n, 3) where n is the number of points
-    :return: numpy array of shape (4,) representing the plane equation coefficients [a, b, c, d]
-             where ax + by + cz + d = 0
+    :return: tuple (plane_coefficients, average_residual)
+             - plane_coefficients: numpy array of shape (4,) representing the plane equation coefficients [a, b, c, d]
+               where ax + by + cz + d = 0
+             - average_residual: float representing the average residual (average distance) of points from the plane
     """
     # Ensure we have at least 3 points
     if points.shape[0] < 3:
@@ -243,8 +233,10 @@ def fit_plane_least_squares(points):
     # Center the points by subtracting the centroid
     centered_points = points - centroid
 
+    # Compute the covariance matrix of the centered points
     cov_matrix = np.cov(centered_points.T)
 
+    # Compute the eigenvalues and eigenvectors of the covariance matrix
     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
 
     # The normal vector of the plane is the eigenvector corresponding to the smallest eigenvalue
@@ -257,11 +249,109 @@ def fit_plane_least_squares(points):
     # Calculate the d coefficient
     d = -np.dot(normal_vector, centroid)
 
-    # Return the coefficients of the plane equation ax + by + cz + d = 0
-    return np.append(normal_vector, d)
+    # The plane equation is now given by: ax + by + cz + d = 0, where [a, b, c] is the normal_vector
+    plane_coefficients = np.append(normal_vector, d)
+
+    # Calculate the residuals (perpendicular distance of each point from the plane)
+    distances = np.abs(np.dot(points, normal_vector) + d) / \
+        np.linalg.norm(normal_vector)
+
+    # Calculate the average residual
+    average_residual = np.mean(distances)
+
+    return plane_coefficients, average_residual
 
 
-plane = fit_plane_least_squares(filtered_points[:, :3])
-print(f"Fitted plane coefficients: {plane}")
+def compute_voxel_planes(lidar_data, voxel_labels):
+    point_cloud = lidar_data[:, 0:3]
+    voxel_planes = dict()
+    residuals = dict()
+    for label in np.unique(voxel_labels, axis=0):
+        points = point_cloud[voxel_labels == label]
+        try:
+            voxel_planes[label], residuals[label] = fit_plane_least_squares(
+                points)
 
-visualize_selected_points(filtered_points, filtered_labels, label_metadata, plane)
+        except Exception as e:
+            print(f'Error fitting plane for voxel {label}: {e}')
+
+    return voxel_planes, residuals
+
+
+def plot_voxel_map(voxel_map, value_map, save_and_open=False, output_file='voxel_map.png', dpi=300):
+    # Extract coordinates from voxel_map
+    voxel_coords = np.array(list(voxel_map.values()))  # 2D coordinates (x, y)
+
+    # Get the interesting values from the value_map, using NaN for missing values
+    voxel_values = np.array([value_map.get(key, np.nan)
+                            for key in voxel_map.keys()])
+
+    # Determine grid size based on voxel coordinates
+    x_min, y_min = voxel_coords.min(axis=0)
+    x_max, y_max = voxel_coords.max(axis=0)
+
+    # Create a 2D grid for the image (initialize with NaNs)
+    grid = np.full((x_max - x_min + 1, y_max - y_min + 1), np.nan)
+
+    # Fill the grid with values from the value_map
+    for (x, y), value in zip(voxel_coords, voxel_values):
+        # Shift coordinates to fit in the grid
+        grid[x - x_min, y - y_min] = value
+
+    # Create a masked array to handle NaN values
+    masked_grid = np.ma.masked_invalid(grid)
+
+    # Plot the 2D image
+    plt.figure(figsize=(12, 10), dpi=dpi)
+    im = plt.imshow(masked_grid.T, cmap='viridis', origin='lower', extent=[
+                    x_min-0.5, x_max+0.5, y_min-0.5, y_max+0.5], interpolation='nearest')
+    cbar = plt.colorbar(im, label='Values', fraction=0.046, pad=0.04)
+    cbar.ax.tick_params(labelsize=10)
+    plt.title('2D Visualization of Voxel Map Values', fontsize=16)
+    plt.xlabel('X Coordinate', fontsize=12)
+    plt.ylabel('Y Coordinate', fontsize=12)
+    plt.tick_params(axis='both', which='major', labelsize=10)
+
+    # Add text annotations only for N/A values
+    for (x, y), value in zip(voxel_coords, voxel_values):
+        if np.isnan(value):
+            pass
+            # plt.text(x, y, 'N/A', ha='center', va='center', color='red', fontweight='bold', fontsize=8)
+
+    plt.grid(True, which='both', color='gray', linestyle='-', linewidth=0.5)
+    plt.tight_layout()
+
+    if save_and_open:
+        plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+        plt.close()
+        open_image(output_file)
+    else:
+        plt.show()
+        plt.close()
+
+
+def open_image(file_path):
+    """
+    Open the image file with the default application.
+    """
+    if os.name == 'nt':  # For Windows
+        os.startfile(file_path)
+    elif os.name == 'posix':  # For macOS and Linux
+        try:
+            subprocess.call(('open', file_path))  # macOS
+        except:
+            subprocess.call(('xdg-open', file_path))  # Linux
+
+
+def apply_threshold(pointcloud, labels, z_treshold):
+    '''
+    Apply a z-threshold to the pointcloud data and labels
+    :param pointcloud: The point cloud data (N x 4 array where last column is label).
+    '''
+    
+    ground_mask = pointcloud[:, 2] < z_treshold
+    pointcloud_ = pointcloud[ground_mask]
+    labels_ = labels[ground_mask]
+    print(f"Removed {len(pointcloud) - len(pointcloud_)} points below z-threshold {z_treshold}, remaining {len(pointcloud_)} points")
+    print(f"This represents {100*(len(pointcloud_) / len(pointcloud)):.2f}% of the original point cloud data")  
+    return pointcloud_, labels_
