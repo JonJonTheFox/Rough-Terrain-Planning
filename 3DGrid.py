@@ -63,8 +63,8 @@ def visualize_with_open3d(point_cloud, sem_labels):
 
 
 # Example usage
-point_cloud_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/lidar/val/2022-12-07_aying_hills//2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
-label_path = '/Users/YehonatanMileguir/GOOSE/goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
+point_cloud_path = 'goose_3d_val/lidar/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
+label_path = 'goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
 
 # Load the point cloud data
 point_cloud = load_point_cloud(point_cloud_path)
@@ -76,7 +76,7 @@ sem_labels, inst_labels = load_label(label_path)
 x_index, y_index = 0, 0  # Modify these indices to select different patches
 
 # Extract points and labels from the defined grid patch
-patch_points, patch_labels = get_patch_points_and_labels_by_grid(point_cloud, sem_labels, x_index, y_index, patch_size=50)
+patch_points, patch_labels = get_patch_points_and_labels_by_grid(point_cloud, sem_labels, x_index, y_index, patch_size=100)
 
 # Visualize the patch with semantic labels
 visualize_with_open3d(patch_points, patch_labels)
