@@ -215,13 +215,13 @@ def filter_labels(lidar_data, labels, keep_labels):
 
 def fit_plane_least_squares(points):
     """
-    Fit a plane to a set of 3D points using the least squares method and compute the average residual.
+    Fit a plane to a set of 3D points using the least squares method and compute the Root Mean Squared Error (RMSE).
 
     :param points: numpy array of shape (n, 3) where n is the number of points
     :return: tuple (plane_coefficients, average_residual)
              - plane_coefficients: numpy array of shape (4,) representing the plane equation coefficients [a, b, c, d]
                where ax + by + cz + d = 0
-             - average_residual: float representing the average residual (average distance) of points from the plane
+             - RMSE: Root Mean Squared Error
     """
     # Ensure we have at least 3 points
     if points.shape[0] < 3:
@@ -257,25 +257,26 @@ def fit_plane_least_squares(points):
         np.linalg.norm(normal_vector)
 
     # Calculate the average residual
-    average_residual = np.mean(distances)
+    MSE = np.mean(distances ** 2)
+    RMSE = np.sqrt(MSE)
 
-    return plane_coefficients, average_residual
+    return plane_coefficients, RMSE
 
 
 def compute_voxel_planes(lidar_data, voxel_labels):
     point_cloud = lidar_data[:, 0:3]
     voxel_planes = dict()
-    residuals = dict()
+    rmse = dict()
     for label in np.unique(voxel_labels, axis=0):
         points = point_cloud[voxel_labels == label]
         try:
-            voxel_planes[label], residuals[label] = fit_plane_least_squares(
+            voxel_planes[label], rmse[label] = fit_plane_least_squares(
                 points)
 
         except Exception as e:
             print(f'Error fitting plane for voxel {label}: {e}')
 
-    return voxel_planes, residuals
+    return voxel_planes, rmse
 
 
 def plot_voxel_map(voxel_map, value_map, save_and_open=False, output_file='voxel_map.png', dpi=300):
