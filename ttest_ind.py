@@ -5,9 +5,9 @@ from scipy.stats import ttest_ind
 import random
 
 
-def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class='grass', z_threshold=1, num_voxels=1):
+def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15):
     """
-    Processes a single image and returns RMSE for a specified number of random voxels from the target class.
+    Processes a single image and returns RMSE values for the target class in each voxel.
     """
     # Load the pointcloud and label metadata
     lidar_data, lidar_labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
@@ -15,39 +15,78 @@ def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class='grass',
     # Apply z-threshold to pointcloud and labels
     pointcloud, labels = pf.apply_threshold(lidar_data, lidar_labels, z_threshold)
 
-    # Voxelize the point cloud
-    voxel_labels, voxel_map = v3d.voxelize_point_cloud_2d(pointcloud, voxel_size=30)
+    # If a target class is provided, filter for that class
+    if target_class:
+        # Get the label_key associated with the target class
+        label_key = label_metadata[label_metadata['class_name'] == target_class]['label_key'].values[0]
 
-    # Calculate voxel planes and residuals (which includes RMSE)
-    voxel_planes, rmse = pf.compute_voxel_planes(pointcloud, voxel_labels)
+        # Apply the filter on both pointcloud and labels to ensure they remain aligned
+        valid_indices = (labels == label_key)
+        pointcloud = pointcloud[valid_indices]
+        labels = labels[valid_indices]
 
-    # Filter by the target class and select random voxels
-    target_voxels_rmse = []
-    for voxel, voxel_rmse in rmse.items():
-        voxel_data = label_metadata[label_metadata['label_key'] == voxel]
-        if not voxel_data.empty:
-            voxel_class = voxel_data['class_name'].values[0]
-            if voxel_class == target_class:
-                target_voxels_rmse.append(voxel_rmse)
+    # Ensure pointcloud and labels still match after filtering
+    assert len(pointcloud) == len(labels), "Filtered pointcloud and labels must have the same length."
 
-    # Select a random sample of voxel RMSE values if available
-    if target_voxels_rmse:
-        return random.sample(target_voxels_rmse, min(num_voxels, len(target_voxels_rmse)))
-    else:
-        return []  # Return empty list if no voxels match the target class
+    # Initialize a list to store RMSE data for each label
+    data = []
+
+    # Iterate over each unique label in the labels
+    for label in np.unique(labels):
+        # Filter the point cloud based on the current label
+        filtered_pointcloud = pointcloud[labels == label]
+
+        # Voxelize the filtered point cloud
+        voxel_labels_, voxel_map_ = v3d.voxelize_point_cloud_2d(filtered_pointcloud, voxel_size=voxel_size)
+
+        # Compute the plane for each voxel and the associated RMSE
+        voxel_planes_, rmse_ = pf.compute_voxel_planes(filtered_pointcloud, voxel_labels_)
+
+        # Skip if no RMSE data is available
+        if len(rmse_) == 0:
+            continue
+
+        total_points = 0
+        weighted_rmse_sum = 0
+        rmse_values = list(rmse_.values())
+
+        # Compute RMSE statistics and total points for each voxel
+        for voxel_label, rmse_value in rmse_.items():
+            num_points_in_voxel = np.sum(voxel_labels_ == voxel_label)
+            weighted_rmse_sum += rmse_value * num_points_in_voxel
+            total_points += num_points_in_voxel
+
+        # Average RMSE weighted by the number of points in each voxel
+        average_rmse_ = weighted_rmse_sum / total_points if total_points > 0 else 0
+
+        # Append the results for the current label to the data list
+        data.append({
+            'label': label,
+            'average_rmse': average_rmse_,
+            'rmse_values': rmse_values,
+            'number_of_voxels': len(np.unique(voxel_labels_)),
+            'total_points': total_points,
+        })
+
+    # Return the RMSE statistics for all labels in the image
+    return data
 
 
-def process_multiple_images(image_list, lidar_dir, labels_dir, csv_file, target_class='grass', z_threshold=1, num_voxels=1):
+def process_multiple_images(image_list, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15):
     """
-    Processes multiple images and collects RMSE for a specified number of random voxels for a target class.
+    Processes multiple images and collects RMSE data for the target class across all images.
     """
-    voxel_residuals = []
+    all_rmse_values = []
 
     for prefix in image_list:
-        selected_voxels_rmse = process_image(prefix, lidar_dir, labels_dir, csv_file, target_class, z_threshold, num_voxels)
-        voxel_residuals.extend(selected_voxels_rmse)  # Collect RMSE for random voxels
+        # Process each image and get RMSE statistics for all labels
+        image_data = process_image(prefix, lidar_dir, labels_dir, csv_file, target_class, z_threshold, voxel_size)
 
-    return voxel_residuals  # Return RMSE collected for all images
+        # Collect RMSE values for the target class
+        for data in image_data:
+            all_rmse_values.extend(data['rmse_values'])
+
+    return all_rmse_values  # Return all RMSE values collected for all images
 
 
 def perform_t_test(rmse_1, rmse_2):
@@ -68,82 +107,32 @@ if __name__ == "__main__":
     target_class1 = input("Enter the class for image set 1 (e.g., 'low_grass'): ")
     target_class2 = input("Enter the class for image set 2 (e.g., 'bush'): ")
 
-    # Prompt for the number of random voxels to select per image
-    num_voxels = int(input("Enter the number of random voxels to select per image: "))
-
     # Image lists for comparison
     image_list1 = [
         '2022-12-07_aying_hills__0012_1670420985739069345',
         '2022-12-07_aying_hills__0013_1670420991614950614',
         '2022-12-07_aying_hills__0014_1670421005324235752',
-        '2022-12-07_aying_hills__0015_1670421010066267238',
-        '2022-12-07_aying_hills__0016_1670421031919145646',
-        '2022-12-07_aying_hills__0017_1670421057895607851',
-        '2022-12-07_aying_hills__0018_1670421079232429484',
-        '2022-12-07_aying_hills__0019_1670421095003492677',
-        '2022-12-07_aying_hills__0020_1670421106754371527',
-        '2022-12-07_aying_hills__0042_1670421312284207423',
-        '2022-12-07_aying_hills__0043_1670421315376691070',
-        '2022-12-07_aying_hills__0044_1670421321354124635',
-        '2022-12-07_aying_hills__0045_1670421354439414871',
-        '2022-12-07_aying_hills__0046_1670421360005772609',
-        '2022-12-07_aying_hills__0047_1670421370621698009',
-        '2022-12-07_aying_hills__0000_1670420609181206687',
-        '2022-12-07_aying_hills__0001_1670420652887861538',
-        '2022-12-07_aying_hills__0002_1670420663298382187',
-        '2022-12-07_aying_hills__0003_1670420665566527858',
-        '2022-12-07_aying_hills__0004_1670420689172563910',
-        '2022-12-07_aying_hills__0005_1670420698140436007',
-        '2022-12-07_aying_hills__0062_1670421463383944594',
-        '2022-12-07_aying_hills__0063_1670421463796196650',
-        '2022-12-07_aying_hills__0064_1670421474001823741',
-        '2022-12-07_aying_hills__0065_1670421475958264241',
-        '2022-12-07_aying_hills__0066_1670421481936547901',
     ]
 
     image_list2 = [
         '2022-12-07_aying_hills__0012_1670420985739069345',
         '2022-12-07_aying_hills__0013_1670420991614950614',
         '2022-12-07_aying_hills__0014_1670421005324235752',
-        '2022-12-07_aying_hills__0015_1670421010066267238',
-        '2022-12-07_aying_hills__0016_1670421031919145646',
-        '2022-12-07_aying_hills__0017_1670421057895607851',
-        '2022-12-07_aying_hills__0018_1670421079232429484',
-        '2022-12-07_aying_hills__0019_1670421095003492677',
-        '2022-12-07_aying_hills__0020_1670421106754371527',
-        '2022-12-07_aying_hills__0042_1670421312284207423',
-        '2022-12-07_aying_hills__0043_1670421315376691070',
-        '2022-12-07_aying_hills__0044_1670421321354124635',
-        '2022-12-07_aying_hills__0045_1670421354439414871',
-        '2022-12-07_aying_hills__0046_1670421360005772609',
-        '2022-12-07_aying_hills__0047_1670421370621698009',
-        '2022-12-07_aying_hills__0000_1670420609181206687',
-        '2022-12-07_aying_hills__0001_1670420652887861538',
-        '2022-12-07_aying_hills__0002_1670420663298382187',
-        '2022-12-07_aying_hills__0003_1670420665566527858',
-        '2022-12-07_aying_hills__0004_1670420689172563910',
-        '2022-12-07_aying_hills__0005_1670420698140436007',
-        '2022-12-07_aying_hills__0062_1670421463383944594',
-        '2022-12-07_aying_hills__0063_1670421463796196650',
-        '2022-12-07_aying_hills__0064_1670421474001823741',
-        '2022-12-07_aying_hills__0065_1670421475958264241',
-        '2022-12-07_aying_hills__0066_1670421481936547901',
     ]
 
     # Process the images to get voxel RMSE for each class
-    rmse_1 = process_multiple_images(image_list1, lidar_dir, labels_dir, csv_file, target_class=target_class1, num_voxels=num_voxels)
-    rmse_2 = process_multiple_images(image_list2, lidar_dir, labels_dir, csv_file, target_class=target_class2, num_voxels=num_voxels)
+    rmse_1 = process_multiple_images(image_list1, lidar_dir, labels_dir, csv_file, target_class=target_class1)
+    rmse_2 = process_multiple_images(image_list2, lidar_dir, labels_dir, csv_file, target_class=target_class2)
 
     # Perform the t-test on the voxel RMSE values
     t_stat, p_value = perform_t_test(rmse_1, rmse_2)
 
     # Print the t-test results
     print(f"\nT-statistic: {t_stat}, P-value: {p_value}")
-    if p_value > 0.1:
+    if p_value > 0.001:
         print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is not statistically significant (p > {p_value}).")
     else:
         print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is statistically significant (p <= {p_value}).")
-
 
 image_list = [
         '2022-12-07_aying_hills__0000_1670420609181206687',
