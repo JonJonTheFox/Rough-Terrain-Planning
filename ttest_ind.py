@@ -5,9 +5,10 @@ from scipy.stats import ttest_ind
 import random
 
 
-def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15):
+def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15, num_voxels=5):
     """
-    Processes a single image and returns RMSE values for the target class in each voxel.
+    Processes a single image and returns RMSE values for the target class in each voxel,
+    limiting the number of voxels per label.
     """
     # Load the pointcloud and label metadata
     lidar_data, lidar_labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
@@ -46,15 +47,23 @@ def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_
         if len(rmse_) == 0:
             continue
 
+        # Collect RMSE values and their corresponding voxel labels
+        rmse_items = list(rmse_.items())
+
+        # If more than the desired number of voxels, sample 5 voxels randomly
+        if len(rmse_items) > num_voxels:
+            rmse_items = random.sample(rmse_items, num_voxels)
+
         total_points = 0
         weighted_rmse_sum = 0
-        rmse_values = list(rmse_.values())
+        rmse_values = []
 
-        # Compute RMSE statistics and total points for each voxel
-        for voxel_label, rmse_value in rmse_.items():
+        # Compute RMSE statistics for the sampled voxels
+        for voxel_label, rmse_value in rmse_items:
             num_points_in_voxel = np.sum(voxel_labels_ == voxel_label)
             weighted_rmse_sum += rmse_value * num_points_in_voxel
             total_points += num_points_in_voxel
+            rmse_values.append(rmse_value)
 
         # Average RMSE weighted by the number of points in each voxel
         average_rmse_ = weighted_rmse_sum / total_points if total_points > 0 else 0
@@ -64,12 +73,13 @@ def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_
             'label': label,
             'average_rmse': average_rmse_,
             'rmse_values': rmse_values,
-            'number_of_voxels': len(np.unique(voxel_labels_)),
+            'number_of_voxels': len(rmse_items),
             'total_points': total_points,
         })
 
     # Return the RMSE statistics for all labels in the image
     return data
+
 
 
 def process_multiple_images(image_list, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15):
@@ -109,15 +119,11 @@ if __name__ == "__main__":
 
     # Image lists for comparison
     image_list1 = [
-        '2022-12-07_aying_hills__0012_1670420985739069345',
-        '2022-12-07_aying_hills__0013_1670420991614950614',
-        '2022-12-07_aying_hills__0014_1670421005324235752',
+        '2022-12-07_aying_hills__0006_1670420708448844860',
     ]
 
     image_list2 = [
-        '2022-12-07_aying_hills__0012_1670420985739069345',
-        '2022-12-07_aying_hills__0013_1670420991614950614',
-        '2022-12-07_aying_hills__0014_1670421005324235752',
+        '2022-12-07_aying_hills__0006_1670420708448844860',
     ]
 
     # Process the images to get voxel RMSE for each class
@@ -129,7 +135,7 @@ if __name__ == "__main__":
 
     # Print the t-test results
     print(f"\nT-statistic: {t_stat}, P-value: {p_value}")
-    if p_value > 0.001:
+    if p_value > 0.05:
         print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is not statistically significant (p > {p_value}).")
     else:
         print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is statistically significant (p <= {p_value}).")
