@@ -1,3 +1,5 @@
+import csv
+
 import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
@@ -106,6 +108,32 @@ def perform_t_test(rmse_1, rmse_2):
     t_stat, p_value = ttest_ind(rmse_1, rmse_2, equal_var=False)  # Welch's t-test for unequal variances
     return t_stat, p_value
 
+def run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2,  image_list1, image_list2, iterations=10):
+    results = []
+
+    for i in range(iterations):
+        rmse_1 = process_multiple_images(image_list1, lidar_dir, labels_dir, csv_file, target_class=target_class1)
+        rmse_2 = process_multiple_images(image_list2, lidar_dir, labels_dir, csv_file, target_class=target_class2)
+
+        t_stat, p_value = perform_t_test(rmse_1, rmse_2)
+
+        # Log results for each iteration
+        results.append({
+            'Iteration': i + 1,
+            'T-Statistic': t_stat,
+            'P-Value': p_value
+        })
+
+        print(f"Iteration {i + 1}: T-statistic = {t_stat}, P-value = {p_value}")
+
+    # Write the results to a CSV file
+    with open(f'{target_class1}&{target_class2}.csv', mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=['Iteration', 'T-Statistic', 'P-Value'])
+        writer.writeheader()
+        writer.writerows(results)
+
+    print("Results have been saved to {target_class1}&{target_class2}.csv")
+
 
 if __name__ == "__main__":
     # Directories
@@ -120,25 +148,21 @@ if __name__ == "__main__":
     # Image lists for comparison
     image_list1 = [
         '2022-12-07_aying_hills__0006_1670420708448844860',
+        '2022-12-07_aying_hills__0009_1670420878948219746',
+        '2022-12-07_aying_hills__0010_1670420972132205304',
+        '2022-12-07_aying_hills__0011_1670420979760256580',
+        '2022-12-07_aying_hills__0012_1670420985739069345',
     ]
 
     image_list2 = [
         '2022-12-07_aying_hills__0006_1670420708448844860',
+        '2022-12-07_aying_hills__0009_1670420878948219746',
+        '2022-12-07_aying_hills__0010_1670420972132205304',
+        '2022-12-07_aying_hills__0011_1670420979760256580',
+        '2022-12-07_aying_hills__0012_1670420985739069345',
     ]
 
-    # Process the images to get voxel RMSE for each class
-    rmse_1 = process_multiple_images(image_list1, lidar_dir, labels_dir, csv_file, target_class=target_class1)
-    rmse_2 = process_multiple_images(image_list2, lidar_dir, labels_dir, csv_file, target_class=target_class2)
-
-    # Perform the t-test on the voxel RMSE values
-    t_stat, p_value = perform_t_test(rmse_1, rmse_2)
-
-    # Print the t-test results
-    print(f"\nT-statistic: {t_stat}, P-value: {p_value}")
-    if p_value > 0.05:
-        print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is not statistically significant (p > {p_value}).")
-    else:
-        print(f"The RMSE difference between '{target_class1}' and '{target_class2}' is statistically significant (p <= {p_value}).")
+    run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2, image_list1, image_list2, iterations=10)
 
 image_list = [
         '2022-12-07_aying_hills__0000_1670420609181206687',
