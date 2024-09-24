@@ -39,6 +39,7 @@ def voxelize_point_cloud_2d(point_cloud, voxel_size=10):
     # Create unique voxel indices
     unique_voxel_indices = np.unique(voxel_indices, axis=0)
     voxel_labels = np.zeros(voxel_indices.shape[0], dtype=int)
+    unique_voxel_labels = np.arange(len(unique_voxel_indices))
     voxel_map = {}
     
     for label, unique_voxel in enumerate(unique_voxel_indices):
@@ -46,7 +47,7 @@ def voxelize_point_cloud_2d(point_cloud, voxel_size=10):
         voxel_labels[mask] = label
         voxel_map[label] = unique_voxel
 
-    return voxel_labels, voxel_map
+    return voxel_labels, voxel_map, unique_voxel_labels
 
 
 def visualize_with_open3d(point_cloud, sem_labels, voxel_labels=None, selected_voxels=None):
