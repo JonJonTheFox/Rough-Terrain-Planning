@@ -1,10 +1,13 @@
 import csv
-
 import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
 from scipy.stats import ttest_ind
 import random
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+from datetime import datetime
 
 
 def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15, num_voxels=5):
@@ -40,7 +43,8 @@ def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_
         filtered_pointcloud = pointcloud[labels == label]
 
         # Voxelize the filtered point cloud
-        voxel_labels_, voxel_map_ = v3d.voxelize_point_cloud_2d(filtered_pointcloud, voxel_size=voxel_size)
+        voxel_labels_, voxel_map_, unique_voxel_labels_ = v3d.voxelize_point_cloud_2d(filtered_pointcloud,
+                                                                                      voxel_size=voxel_size)
 
         # Compute the plane for each voxel and the associated RMSE
         voxel_planes_, rmse_ = pf.compute_voxel_planes(filtered_pointcloud, voxel_labels_)
@@ -83,7 +87,6 @@ def process_image(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_
     return data
 
 
-
 def process_multiple_images(image_list, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15):
     """
     Processes multiple images and collects RMSE data for the target class across all images.
@@ -108,12 +111,30 @@ def perform_t_test(rmse_1, rmse_2):
     t_stat, p_value = ttest_ind(rmse_1, rmse_2, equal_var=False)  # Welch's t-test for unequal variances
     return t_stat, p_value
 
-def run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2,  image_list1, image_list2, iterations=10):
+def run_experiment_with_violin(lidar_dir1, labels_dir1, lidar_dir2, labels_dir2, csv_file, target_class1,
+                                   target_class2, image_list1, image_list2, iterations=10):
+    # Create a directory for results
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_dir = f"{target_class1}_vs_{target_class2}_{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save the image names into a text file
+    with open(os.path.join(output_dir, 'image_names.txt'), 'w') as f:
+        f.write("Image List 1:\n")
+        f.write('\n'.join(image_list1) + '\n\n')
+        f.write("Image List 2:\n")
+        f.write('\n'.join(image_list2))
+
     results = []
 
     for i in range(iterations):
-        rmse_1 = process_multiple_images(image_list1, lidar_dir, labels_dir, csv_file, target_class=target_class1)
-        rmse_2 = process_multiple_images(image_list2, lidar_dir, labels_dir, csv_file, target_class=target_class2)
+        print(f"Running experiment iteration {i + 1}/{iterations}...")
+
+        # Process images for the first target class and corresponding directory
+        rmse_1 = process_multiple_images(image_list1, lidar_dir1, labels_dir1, csv_file, target_class=target_class1)
+
+        # Process images for the second target class and corresponding directory
+        rmse_2 = process_multiple_images(image_list2, lidar_dir2, labels_dir2, csv_file, target_class=target_class2)
 
         t_stat, p_value = perform_t_test(rmse_1, rmse_2)
 
@@ -126,19 +147,119 @@ def run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2
 
         print(f"Iteration {i + 1}: T-statistic = {t_stat}, P-value = {p_value}")
 
-    # Write the results to a CSV file
-    with open(f'{target_class1}&{target_class2}.csv', mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=['Iteration', 'T-Statistic', 'P-Value'])
-        writer.writeheader()
-        writer.writerows(results)
 
-    print("Results have been saved to {target_class1}&{target_class2}.csv")
+        # Save RMSE values to a CSV file for the current iteration
+        rmse_csv_filename = os.path.join(output_dir, f'iteration_{i + 1}_rmse_values.csv')
+        with open(rmse_csv_filename, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Target_Class', 'RMSE_Value'])
+            for rmse_value in rmse_1:
+                writer.writerow([target_class1, rmse_value])
+            for rmse_value in rmse_2:
+                writer.writerow([target_class2, rmse_value])
+
+        print(f"RMSE values for iteration {i + 1} have been saved to {rmse_csv_filename}")
+
+            # Plot violin plots for the RMSE values for this iteration
+        plot_violin_rmse_per_iteration(rmse_1, rmse_2, target_class1, target_class2, output_dir, iteration=i + 1)
+
+
+
+        # Write the t-test results to a CSV file
+        csv_filename = os.path.join(output_dir, f'{target_class1}_vs_{target_class2}_t_test.csv')
+        with open(csv_filename, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=['Iteration', 'T-Statistic', 'P-Value'])
+            writer.writeheader()
+            writer.writerows(results)
+
+        print(f"T-test results have been saved to {csv_filename}")
+
+        plot_p_values(csv_filename, output_dir)
+
+def plot_violin_rmse_per_iteration(rmse_class1, rmse_class2, target_class1, target_class2, output_dir, iteration):
+        """
+        Generates a violin plot of RMSE values for a single experiment iteration.
+        """
+        # Combine the RMSE values and class labels into a single data structure
+        data = {
+            'RMSE': rmse_class1 + rmse_class2,
+            'Target_Class': [target_class1] * len(rmse_class1) + [target_class2] * len(rmse_class2)
+        }
+
+        # Create a violin plot of the RMSE values for each class for this iteration
+        plt.figure(figsize=(8, 6))
+        sns.violinplot(x='Target_Class', y='RMSE', data=data)
+        plt.title(f'Violin Plot of RMSE for {target_class1} and {target_class2} (Iteration {iteration})')
+        plt.ylabel('RMSE')
+
+        # Save the plot for this iteration
+        plt.savefig(os.path.join(output_dir, f'violin_plot_rmse_iteration_{iteration}.png'))
+        plt.close()
+
+        print(f"Violin plot for iteration {iteration} has been saved.")
+
+
+
+
+
+def plot_p_values(csv_filename, output_dir):
+    p_values = []
+
+    with open(csv_filename, mode='r') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            p_values.append(float(row['P-Value']))
+
+    # Plot 1: Boxplot
+    plt.figure(figsize=(8, 6))
+    sns.boxplot(data=p_values)
+    plt.title("Boxplot of P-Values")
+    plt.ylabel("P-Values")
+    plt.savefig(os.path.join(output_dir, 'boxplot.png'))
+    plt.close()
+
+    # Plot 2: Violin plot
+    plt.figure(figsize=(8, 6))
+    sns.violinplot(data=p_values)
+    plt.title("Violin Plot of P-Values")
+    plt.ylabel("P-Values")
+    plt.savefig(os.path.join(output_dir, 'violin_plot.png'))
+    plt.close()
+
+    # Plot 3: Histogram
+    plt.figure(figsize=(8, 6))
+    plt.hist(p_values, bins=20, edgecolor='black')
+    plt.axvline(0.05, color='r', linestyle='--', label='p = 0.05')
+    plt.axvline(0.01, color='g', linestyle='--', label='p = 0.01')
+    plt.title('Histogram of P-Values')
+    plt.xlabel('P-Value')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, 'histogram.png'))
+    plt.close()
+
+    # Plot 4: ECDF (Empirical Cumulative Distribution Function)
+    plt.figure(figsize=(8, 6))
+    sns.ecdfplot(p_values)
+    plt.axvline(0.05, color='r', linestyle='--', label='p = 0.05')
+    plt.axvline(0.01, color='g', linestyle='--', label='p = 0.01')
+    plt.title('ECDF of P-Values')
+    plt.xlabel('P-Value')
+    plt.ylabel('Proportion <= P-Value')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, 'ecdf.png'))
+    plt.close()
 
 
 if __name__ == "__main__":
-    # Directories
-    lidar_dir = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
-    labels_dir = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
+    # Directories for first set of images
+    lidar_dir1 = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
+    labels_dir1 = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
+
+    # Directories for second set of images
+    lidar_dir2 = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
+    labels_dir2 = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
+
     csv_file = 'goose_3d_val/goose_label_mapping.csv'
 
     # Prompt for the class labels to compare
@@ -162,73 +283,12 @@ if __name__ == "__main__":
         '2022-12-07_aying_hills__0012_1670420985739069345',
     ]
 
-    run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2, image_list1, image_list2, iterations=10)
+    run_experiment_with_violin(lidar_dir1, labels_dir1, lidar_dir2, labels_dir2, csv_file, target_class1, target_class2, image_list1, image_list2, iterations=5)
 
-image_list = [
-        '2022-12-07_aying_hills__0000_1670420609181206687',
-        '2022-12-07_aying_hills__0001_1670420652887861538',
-        '2022-12-07_aying_hills__0002_1670420663298382187',
-        '2022-12-07_aying_hills__0003_1670420665566527858',
-        '2022-12-07_aying_hills__0004_1670420689172563910',
-        '2022-12-07_aying_hills__0005_1670420698140436007',
-        '2022-12-07_aying_hills__0006_1670420708448844860',
-        '2022-12-07_aying_hills__0008_1670420875957530235',
-        '2022-12-07_aying_hills__0009_1670420878948219746',
-        '2022-12-07_aying_hills__0010_1670420972132205304',
-        '2022-12-07_aying_hills__0011_1670420979760256580',
-        '2022-12-07_aying_hills__0012_1670420985739069345',
-        #'2022-12-07_aying_hills__0013_1670420991614950614',
-        #'2022-12-07_aying_hills__0014_1670421005324235752',
-        #'2022-12-07_aying_hills__0015_1670421010066267238',
-        #'2022-12-07_aying_hills__0016_1670421031919145646',
-        #'2022-12-07_aying_hills__0017_1670421057895607851',
-        #'2022-12-07_aying_hills__0018_1670421079232429484',
-        #'2022-12-07_aying_hills__0019_1670421095003492677',
-        #'2022-12-07_aying_hills__0020_1670421106754371527',
-        #'2022-12-07_aying_hills__0021_1670421115000885398',
-        #'2022-12-07_aying_hills__0022_1670421125720729310',
-        #'2022-12-07_aying_hills__0023_1670421136338979710',
-        #'2022-12-07_aying_hills__0024_1670421147263892369',
-        #'2022-12-07_aying_hills__0025_1670421148708137583',
-        #'2022-12-07_aying_hills__0026_1670421149222734552',
-        #'2022-12-07_aying_hills__0027_1670421152520763486',
-        #'2022-12-07_aying_hills__0028_1670421156954085022',
-        #'2022-12-07_aying_hills__0029_1670421161282631132',
-        #'2022-12-07_aying_hills__0030_1670421161488766857',
-        #'2022-12-07_aying_hills__0031_1670421164065826921',
-        #'2022-12-07_aying_hills__0032_1670421167674448570',
-        #'2022-12-07_aying_hills__0033_1670421176951435802',
-        #'2022-12-07_aying_hills__0034_1670421194782947030',
-        #'2022-12-07_aying_hills__0035_1670421216118815596',
-        #'2022-12-07_aying_hills__0036_1670421219933042864',
-        #'2022-12-07_aying_hills__0037_1670421230548919820',
-        #'2022-12-07_aying_hills__0038_1670421236630781967',
-        #'2022-12-07_aying_hills__0039_1670421255286672290',
-        #'2022-12-07_aying_hills__0040_1670421276003323059',
-        #'2022-12-07_aying_hills__0041_1670421306821351925',
-        #'2022-12-07_aying_hills__0042_1670421312284207423',
-        #'2022-12-07_aying_hills__0043_1670421315376691070',
-        #'2022-12-07_aying_hills__0044_1670421321354124635',
-        #'2022-12-07_aying_hills__0045_1670421354439414871',
-        #'2022-12-07_aying_hills__0046_1670421360005772609',
-        #2022-12-07_aying_hills__0047_1670421370621698009',
-        #2022-12-07_aying_hills__0048_1670421387318425961',
-        #'2022-12-07_aying_hills__0049_1670421413189702923',
-        #'2022-12-07_aying_hills__0050_1670421419166945886',
-        #'2022-12-07_aying_hills__0051_1670421422259751319',
-        #'2022-12-07_aying_hills__0052_1670421426175744005',
-        #'2022-12-07_aying_hills__0053_1670421437616759245',
-        #'2022-12-07_aying_hills__0054_1670421438647357603',
-        #'2022-12-07_aying_hills__0055_1670421442048655345',
-        #'2022-12-07_aying_hills__0056_1670421446481393352',
-        #'2022-12-07_aying_hills__0057_1670421449778652057',
-        #'2022-12-07_aying_hills__0058_1670421454932264554',
-        #'2022-12-07_aying_hills__0059_1670421456993279654',
-        #'2022-12-07_aying_hills__0060_1670421460086112887',
-        #'2022-12-07_aying_hills__0061_1670421460704308119',
-        '2022-12-07_aying_hills__0062_1670421463383944594',
-        '2022-12-07_aying_hills__0063_1670421463796196650',
-        '2022-12-07_aying_hills__0064_1670421474001823741',
-        '2022-12-07_aying_hills__0065_1670421475958264241',
-        '2022-12-07_aying_hills__0066_1670421481936547901'
+    image_list2 = [
+        '2023-03-03_garching_2__0114_1677850404544550420',
+        '2023-03-03_garching_2__0115_1677850409391907174',
+        '2023-03-03_garching_2__0116_1677850414554513656',
+        '2023-03-03_garching_2__0117_1677850415819237733',
+        '2023-03-03_garching_2__0118_1677850418032002589',
     ]
