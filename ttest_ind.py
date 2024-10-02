@@ -176,6 +176,7 @@ def run_experiment_with_violin(lidar_dir1, labels_dir1, lidar_dir2, labels_dir2,
 
         plot_p_values(csv_filename, output_dir)
 
+
 def plot_violin_rmse_per_iteration(rmse_class1, rmse_class2, target_class1, target_class2, output_dir, iteration):
         """
         Generates a violin plot of RMSE values for a single experiment iteration.
@@ -198,6 +199,28 @@ def plot_violin_rmse_per_iteration(rmse_class1, rmse_class2, target_class1, targ
 
         print(f"Violin plot for iteration {iteration} has been saved.")
 
+
+def plot_violin_rmse_per_iteration_majority_label(rmse_majority, rmse_total, output_dir, iteration):
+    """
+    Generates a violin plot of RMSE values for both the majority label and total RMSE values for a single experiment iteration.
+    """
+    # Create a combined data structure for plotting
+    data = {
+        'RMSE': rmse_majority + rmse_total,
+        'Type': ['Majority Label'] * len(rmse_majority) + ['Total'] * len(rmse_total)
+    }
+
+    # Create a violin plot for the RMSE values of both the majority label and total
+    plt.figure(figsize=(8, 6))
+    sns.violinplot(x='Type', y='RMSE', data=data)
+    plt.title(f'Violin Plot of RMSE for Majority Label and Total (Iteration {iteration})')
+    plt.ylabel('RMSE')
+
+    # Save the plot for this iteration
+    plt.savefig(os.path.join(output_dir, f'violin_plot_rmse_iteration_{iteration}.png'))
+    plt.close()
+
+    print(f"Violin plot for iteration {iteration} has been saved.")
 
 
 
@@ -251,6 +274,109 @@ def plot_p_values(csv_filename, output_dir):
     plt.close()
 
 
+def process_image_with_majority_label(prefix, lidar_dir, labels_dir, csv_file, target_class=None, z_threshold=1, voxel_size=15, num_voxels=5):
+    """
+    Processes a single image and returns RMSE values for the majority label and all points in each voxel.
+    """
+    # Load pointcloud and labels
+    lidar_data, labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
+
+    # Apply z-threshold to pointcloud and labels
+    pointcloud, labels = pf.apply_threshold(lidar_data, labels, z_threshold)
+
+    # Initialize lists to store RMSE values
+    all_voxel_rmse = []
+    majority_label_rmse = []
+
+    # Iterate over each unique label in the labels
+    for label in np.unique(labels):
+        # Filter the point cloud based on the current label
+        filtered_pointcloud = pointcloud[labels == label]
+
+        # Voxelize the filtered point cloud
+        voxel_labels_, voxel_map_, unique_voxel_labels_ = v3d.voxelize_point_cloud_2d(filtered_pointcloud, voxel_size=voxel_size)
+
+        # Filter the corresponding labels using voxelization
+        # Use only the labels corresponding to the points that remain after voxelization
+        labels_in_voxelized_cloud = labels[labels == label][:len(voxel_labels_)]  # Align the labels with voxelized points
+
+        # Compute the plane for each voxel and the associated RMSE
+        voxel_planes_, rmse_ = pf.compute_voxel_planes(filtered_pointcloud, voxel_labels_)
+
+        for voxel_label, rmse_value in rmse_.items():
+            # All points RMSE in the voxel
+            all_voxel_rmse.append(rmse_value)
+
+            # Filter the points and labels for the current voxel
+            points_in_voxel = filtered_pointcloud[voxel_labels_ == voxel_label]
+            labels_in_voxel = labels_in_voxelized_cloud[voxel_labels_ == voxel_label]
+
+            # Ensure points_in_voxel and labels_in_voxel match
+            if len(points_in_voxel) != len(labels_in_voxel):
+                continue  # Skip this voxel if there's a mismatch
+
+            # Find the majority label in the voxel
+            majority_label = np.bincount(labels_in_voxel).argmax()
+
+            # Get points that belong to the majority label
+            majority_label_points = points_in_voxel[labels_in_voxel == majority_label]
+
+            # Compute RMSE for the majority label points
+            if len(majority_label_points) >= 3:
+                majority_voxel_planes_, majority_rmse_ = pf.fit_plane_least_squares(majority_label_points)
+                majority_label_rmse.append(majority_rmse_)
+
+    return all_voxel_rmse, majority_label_rmse
+
+
+
+
+def run_experiment_with_majority_label(lidar_dir1, labels_dir1, csv_file, image_list1, iterations=10):
+        # Create a directory for results
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_dir = f"experiment_majority_label_{timestamp}"
+        os.makedirs(output_dir, exist_ok=True)
+
+        results = []
+
+        for i in range(iterations):
+            print(f"Running experiment iteration {i + 1}/{iterations}...")
+
+            # Process images and get RMSE statistics
+            all_voxel_rmse = []
+            majority_label_rmse = []
+            for prefix in image_list1:
+                all_rmse, majority_rmse = process_image_with_majority_label(prefix, lidar_dir1, labels_dir1, csv_file)
+                all_voxel_rmse.extend(all_rmse)
+                majority_label_rmse.extend(majority_rmse)
+
+            # Perform the t-test between all voxel RMSE and majority label RMSE
+            t_stat, p_value = perform_t_test(all_voxel_rmse, majority_label_rmse)
+
+            # Log results for each iteration
+            results.append({
+                'Iteration': i + 1,
+                'T-Statistic': t_stat,
+                'P-Value': p_value
+            })
+
+            print(f"Iteration {i + 1}: T-statistic = {t_stat}, P-value = {p_value}")
+
+            plot_violin_rmse_per_iteration_majority_label(all_voxel_rmse, majority_label_rmse, output_dir,i+1)
+
+        # Save the t-test results
+        csv_filename = os.path.join(output_dir, f't_test_majority_label.csv')
+        with open(csv_filename, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=['Iteration', 'T-Statistic', 'P-Value'])
+            writer.writeheader()
+            writer.writerows(results)
+
+        print(f"T-test results have been saved to {csv_filename}")
+
+
+        plot_p_values(csv_filename, output_dir)
+
+
 if __name__ == "__main__":
     # Directories for first set of images
     lidar_dir1 = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
@@ -263,8 +389,8 @@ if __name__ == "__main__":
     csv_file = 'goose_3d_val/goose_label_mapping.csv'
 
     # Prompt for the class labels to compare
-    target_class1 = input("Enter the class for image set 1 (e.g., 'low_grass'): ")
-    target_class2 = input("Enter the class for image set 2 (e.g., 'bush'): ")
+    #target_class1 = input("Enter the class for image set 1 (e.g., 'low_grass'): ")
+    #target_class2 = input("Enter the class for image set 2 (e.g., 'bush'): ")
 
     # Image lists for comparison
     image_list1 = [
@@ -283,7 +409,7 @@ if __name__ == "__main__":
         '2022-12-07_aying_hills__0012_1670420985739069345',
     ]
 
-    run_experiment_with_violin(lidar_dir1, labels_dir1, lidar_dir2, labels_dir2, csv_file, target_class1, target_class2, image_list1, image_list2, iterations=5)
+    run_experiment_with_majority_label(lidar_dir1, labels_dir1, csv_file, image_list1, iterations=1)
 
     image_list2 = [
         '2023-03-03_garching_2__0114_1677850404544550420',
