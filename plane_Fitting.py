@@ -345,14 +345,19 @@ def open_image(file_path):
 
 
 def apply_threshold(pointcloud, labels, z_treshold):
-    '''
-    Apply a z-threshold to the pointcloud data and labels
-    :param pointcloud: The point cloud data (N x 4 array where last column is label).
-    '''
-    
     ground_mask = pointcloud[:, 2] < z_treshold
     pointcloud_ = pointcloud[ground_mask]
     labels_ = labels[ground_mask]
-    print(f"Removed {len(pointcloud) - len(pointcloud_)} points below z-threshold {z_treshold}, remaining {len(pointcloud_)} points")
-    print(f"This represents {100*(len(pointcloud_) / len(pointcloud)):.2f}% of the original point cloud data")  
+
+    # Debugging: Check label distribution before and after thresholding
+    print("Label distribution before threshold:")
+    print(np.unique(labels, return_counts=True))
+
+    print("Label distribution after threshold:")
+    print(np.unique(labels_, return_counts=True))
+
+    print(
+        f"Removed {len(pointcloud) - len(pointcloud_)} points below z-threshold {z_treshold}, remaining {len(pointcloud_)} points")
+    print(f"This represents {100 * (len(pointcloud_) / len(pointcloud)):.2f}% of the original point cloud data")
     return pointcloud_, labels_
+
