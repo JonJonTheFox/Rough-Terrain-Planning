@@ -1,0 +1,19 @@
+# Mathis's custom .gitignore
+.DS_Store
+__pycache__/
+*.py[cod]
+local_storage/
+*.local
+.local_trash/
+*.tmp
+*.swp
+*.swo
+*~
+*.log
+.env
+.env.local
+build/
+dist/
+venv/
+# Repo specific
+data/
