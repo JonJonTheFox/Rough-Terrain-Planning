@@ -51,12 +51,14 @@ def process_image_with_majority_label_comparison(prefix, lidar_dir, labels_dir, 
         majority_label = np.bincount(labels_in_voxel).argmax()
 
         # Filter out majority labels greater than 100
-        if majority_label > 100:
-            print(f"Skipping majority label {majority_label} (label > 100)")
-            continue
+        majority_label_row = label_metadata[label_metadata['label_key'] == majority_label]
 
-        # Get the name of the majority label using label_metadata
-        majority_label_name = label_metadata[label_metadata['label_key'] == majority_label]['class_name'].values[0]
+        # Add this check to avoid accessing an empty index
+        if not majority_label_row.empty:
+            majority_label_name = majority_label_row['class_name'].values[0]
+        else:
+            print(f"Warning: Majority label {majority_label} not found in label metadata.")
+            majority_label_name = "Unknown"
 
         # Get points that belong to the majority label
         majority_label_points = points_in_voxel[labels_in_voxel == majority_label]
@@ -252,18 +254,18 @@ def run_experiment_compare_majority_total_plotly(lidar_dir1, labels_dir1, csv_fi
 
 if __name__ == "__main__":
     # Directories for first set of images
-    lidar_dir1 = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
-    labels_dir1 = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
+    lidar_dir1 = 'goose_3d_val/lidar/val/2022-07-22_flight'
+    labels_dir1 = 'goose_3d_val/labels/val/2022-07-22_flight'
 
     csv_file = 'goose_3d_val/goose_label_mapping.csv'
 
     # Image lists for comparison
     image_list1 = [
-        '2022-12-07_aying_hills__0006_1670420708448844860',
-        '2022-12-07_aying_hills__0009_1670420878948219746',
-        '2022-12-07_aying_hills__0010_1670420972132205304',
-        '2022-12-07_aying_hills__0011_1670420979760256580',
-        '2022-12-07_aying_hills__0012_1670420985739069345',
+        '2022-07-22_flight__0071_1658494234334310308',
+        '2022-07-22_flight__0072_1658494235988100385',
+        '2022-07-22_flight__0073_1658494238675704025',
+        '2022-07-22_flight__0075_1658494242083534022',
+        '2022-07-22_flight__0077_1658494244047191404',
     ]
 
     # Run the experiment comparing RMSE values for total points and majority label points
@@ -284,6 +286,19 @@ if __name__ == "__main__":
         '2022-08-30_siegertsbrunn_feldwege__0532_1661860591874117478',
     ]
 
+    lidar_dir1 = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
+    labels_dir1 = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
+
+    csv_file = 'goose_3d_val/goose_label_mapping.csv'
+
+    # Image lists for comparison
+    image_list1 = [
+        '2022-12-07_aying_hills__0006_1670420708448844860',
+        '2022-12-07_aying_hills__0009_1670420878948219746',
+        '2022-12-07_aying_hills__0010_1670420972132205304',
+        '2022-12-07_aying_hills__0011_1670420979760256580',
+        '2022-12-07_aying_hills__0012_1670420985739069345',
+    ]
     # Run the experiment comparing RMSE values for total points and majority label points
     run_experiment_compare_majority_total(lidar_dir1, labels_dir1, csv_file, image_list1, iterations=1)
     """
