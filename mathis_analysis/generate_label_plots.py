@@ -27,20 +27,21 @@ logger = logging.getLogger(__name__)
 class LabelAnalyzer:
     """Class to handle label analysis across datasets."""
     
-    def __init__(self, output_dir: str = "label_plots_output"):
+    def __init__(self, output_dir: str = "label_plots_output.local"):
         """
         Initialize the LabelAnalyzer.
         
         Args:
             output_dir: Directory to save output plots
         """
-        self.output_dir = output_dir
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = os.path.join(file_dir, output_dir)
         self.datasets_label_counts: Dict = {}
         self.metadata_map: Dict = {}
         self.rgb_map: Dict = {}
         
         # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
     
     def load_metadata(self):
         """Load and prepare metadata for visualization."""

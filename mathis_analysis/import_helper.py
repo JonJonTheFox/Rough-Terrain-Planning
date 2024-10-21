@@ -8,6 +8,9 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 # Base directory for dataset storage
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+# DATA_DIR = PARENT_DIR # Comment this line out if running in a different directory
+DATA_DIR = PARENT_DIR # Comment this line out if running in the original directory
 
 # Short name mappings for the datasets
 DATASET_MAP = {
@@ -28,7 +31,7 @@ def resolve_dataset_path(short_name):
     return DATASET_MAP[short_name]
 
 def load_label_metadata():
-    csv_file = os.path.join(CURRENT_DIR, 'goose_3d_val/goose_label_mapping.csv')
+    csv_file = os.path.join(DATA_DIR, 'data/goose_3d_val/goose_label_mapping.csv')
     try:
         label_metadata = pd.read_csv(csv_file)
         logging.info("Label metadata loaded successfully")
@@ -48,7 +51,7 @@ def get_max_pointclouds_count(short_name):
     - Integer count of point cloud files available in the dataset.
     """
     dataset_name = resolve_dataset_path(short_name)
-    lidar_dir = os.path.join(CURRENT_DIR, f'goose_3d_val/lidar/val/{dataset_name}')
+    lidar_dir = os.path.join(DATA_DIR, f'data/goose_3d_val/lidar/val/{dataset_name}')
     
     try:
         all_files = [f for f in os.listdir(lidar_dir) if f.endswith('.bin')]
@@ -62,8 +65,8 @@ def get_max_pointclouds_count(short_name):
 def import_pc_and_labels(short_name, index, lidar_suffix='vls128', label_suffix='goose'):
     dataset_name = resolve_dataset_path(short_name)
 
-    lidar_dir = os.path.join(CURRENT_DIR, f'goose_3d_val/lidar/val/{dataset_name}')
-    labels_dir = os.path.join(CURRENT_DIR, f'goose_3d_val/labels/val/{dataset_name}')
+    lidar_dir = os.path.join(DATA_DIR, f'data/goose_3d_val/lidar/val/{dataset_name}')
+    labels_dir = os.path.join(DATA_DIR, f'data/goose_3d_val/labels/val/{dataset_name}')
 
     try:
         all_files = [f for f in os.listdir(lidar_dir) if f.endswith('.bin')]
@@ -112,7 +115,7 @@ def import_multiple_pc_and_labels(short_name, start_index, end_index, lidar_suff
     - List of tuples, each containing (pointcloud, labels) for each index.
     """
     dataset_name = resolve_dataset_path(short_name)
-    lidar_dir = os.path.join(CURRENT_DIR, f'goose_3d_val/lidar/val/{dataset_name}')
+    lidar_dir = os.path.join(DATA_DIR, f'data/goose_3d_val/lidar/val/{dataset_name}')
 
     try:
         all_files = [f for f in os.listdir(lidar_dir) if f.endswith('.bin')]
