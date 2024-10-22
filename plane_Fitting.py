@@ -5,6 +5,8 @@ import random
 import matplotlib.pyplot as plt
 import os
 import subprocess
+import seaborn as sns
+from scipy.stats import skew
 
 
 def load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file, lidar_suffix='vls128', label_suffix='goose'):
@@ -213,15 +215,19 @@ def filter_labels(lidar_data, labels, keep_labels):
     return filtered_lidar_data, filtered_labels
 
 
+
+
 def fit_plane_least_squares(points):
     """
-    Fit a plane to a set of 3D points using the least squares method and compute the Root Mean Squared Error (RMSE).
+    Fit a plane to a set of 3D points using the least squares method and compute the Root Mean Squared Error (RMSE)
+    and the skewness of the residuals.
 
     :param points: numpy array of shape (n, 3) where n is the number of points
-    :return: tuple (plane_coefficients, average_residual)
+    :return: tuple (plane_coefficients, RMSE, skewness)
              - plane_coefficients: numpy array of shape (4,) representing the plane equation coefficients [a, b, c, d]
                where ax + by + cz + d = 0
              - RMSE: Root Mean Squared Error
+             - skewness: Skewness of the residuals (distances to the plane)
     """
     # Ensure we have at least 3 points
     if points.shape[0] < 3:
@@ -253,14 +259,17 @@ def fit_plane_least_squares(points):
     plane_coefficients = np.append(normal_vector, d)
 
     # Calculate the residuals (perpendicular distance of each point from the plane)
-    distances = np.abs(np.dot(points, normal_vector) + d) / \
-        np.linalg.norm(normal_vector)
+    distances = np.abs(np.dot(points, normal_vector) + d) / np.linalg.norm(normal_vector)
 
-    # Calculate the average residual
+    # Calculate the RMSE (Root Mean Squared Error)
     MSE = np.mean(distances ** 2)
     RMSE = np.sqrt(MSE)
 
-    return plane_coefficients, RMSE
+    # Calculate the skewness of the residuals
+    residuals_skewness = skew(distances)
+
+    return plane_coefficients, RMSE, residuals_skewness
+
 
 
 def compute_voxel_planes(lidar_data, voxel_labels):
@@ -345,19 +354,315 @@ def open_image(file_path):
 
 
 def apply_threshold(pointcloud, labels, z_treshold):
+    '''
+    Apply a z-threshold to the pointcloud data and labels
+    :param pointcloud: The point cloud data (N x 4 array where last column is label).
+    '''
+    
     ground_mask = pointcloud[:, 2] < z_treshold
     pointcloud_ = pointcloud[ground_mask]
     labels_ = labels[ground_mask]
-
-    # Debugging: Check label distribution before and after thresholding
-    print("Label distribution before threshold:")
-    print(np.unique(labels, return_counts=True))
-
-    print("Label distribution after threshold:")
-    print(np.unique(labels_, return_counts=True))
-
-    print(
-        f"Removed {len(pointcloud) - len(pointcloud_)} points below z-threshold {z_treshold}, remaining {len(pointcloud_)} points")
-    print(f"This represents {100 * (len(pointcloud_) / len(pointcloud)):.2f}% of the original point cloud data")
+    print(f"Removed {len(pointcloud) - len(pointcloud_)} points below z-threshold {z_treshold}, remaining {len(pointcloud_)} points")
+    print(f"This represents {100*(len(pointcloud_) / len(pointcloud)):.2f}% of the original point cloud data")  
     return pointcloud_, labels_
 
+
+
+
+def preprocess_voxels(voxel_labels, pointcloud, labels, min_len=10, proportion_threshold=0.7):
+    """
+    Preprocess voxels by mapping each voxel to its majority label and filtering based on point count and label proportion.
+
+    Parameters:
+    - voxel_labels (array-like): Array of voxel labels for each point.
+    - pointcloud (np.ndarray): Array of point cloud data.
+    - labels (array-like): Array of labels corresponding to each point.
+    - min_len (int, optional): Minimum number of points required in a voxel to consider it. Default is 10.
+    - proportion_threshold (float, optional): Minimum proportion of the majority label within a voxel to retain it. Default is 0.7.
+
+    Returns:
+    - map_to_majority (dict): Mapping from voxel ID to its majority label.
+    - voxel_pointclouds (dict): Mapping from voxel ID to its point cloud data.
+    - voxel_ids_after_preprocessing (set): Set of voxel IDs that passed the preprocessing filters.
+    """
+    # Ensure that voxel_labels and labels are NumPy arrays
+    voxel_labels = np.array(voxel_labels)
+    labels = np.array(labels)
+    
+    map_to_majority = {}
+    voxel_pointclouds = {}
+    voxel_ids_after_preprocessing = set()
+    
+    unique_voxel_labels = np.unique(voxel_labels)
+    
+    for vox_id in unique_voxel_labels:
+        # Create the mask for the voxel
+        mask = voxel_labels == vox_id
+        
+        # Check if mask is correctly generated
+        if np.sum(mask) == 0:
+            continue
+        
+        # Retrieve the points and labels in the voxel
+        voxel_points = pointcloud[mask]
+        voxel_lidar_labels = labels[mask]
+        
+        # Skip if the voxel has less than N points
+        if len(voxel_points) < min_len:
+            continue
+        
+        # Find unique labels and their counts in the voxel
+        unique, counts = np.unique(voxel_lidar_labels, return_counts=True)
+        
+        # Find the majority label and its proportion
+        majority_index = np.argmax(counts)
+        majority_label = unique[majority_index]
+        majority_proportion = counts[majority_index] / np.sum(counts)
+        
+        # Skip if the majority label is less than the threshold proportion
+        if majority_proportion < proportion_threshold:
+            continue
+        
+        # Map the voxel to the majority label
+        map_to_majority[vox_id] = majority_label
+        voxel_pointclouds[vox_id] = voxel_points
+        voxel_ids_after_preprocessing.add(vox_id)
+    
+    return map_to_majority, voxel_pointclouds, voxel_ids_after_preprocessing
+
+
+
+
+def analyze_label_frequency(map_to_majority, label_to_class, sort_order='ascending'):
+    """
+    Analyze the frequency of labels in the map_to_majority dictionary and return a sorted DataFrame.
+
+    Parameters:
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    - sort_order (str, optional): Order to sort the labels. Options are 'ascending' or 'descending'. Default is 'ascending'.
+
+    Returns:
+    - freq_df (pd.DataFrame): DataFrame containing 'Label_key', 'Class_name', and 'Frequency', sorted by 'Label_key'.
+    """
+    # Calculate frequency of each label
+    label_freq = {}
+    for _, label in map_to_majority.items():
+        label_freq[label] = label_freq.get(label, 0) + 1
+
+    # Create a DataFrame from the frequency dictionary
+    freq_df = pd.DataFrame(list(label_freq.items()), columns=['Label_key', 'Frequency'])
+
+    # Map label keys to class names
+    freq_df['Class_name'] = freq_df['Label_key'].apply(lambda x: label_to_class.get(x, 'Unknown'))
+
+    # Reorder columns
+    freq_df = freq_df[['Label_key', 'Class_name', 'Frequency']]
+
+    # Sort the DataFrame based on 'Label_key'
+    if sort_order == 'ascending':
+        freq_df = freq_df.sort_values(by='Label_key', ascending=True).reset_index(drop=True)
+    elif sort_order == 'descending':
+        freq_df = freq_df.sort_values(by='Label_key', ascending=False).reset_index(drop=True)
+    else:
+        raise ValueError("sort_order must be either 'ascending' or 'descending'.")
+
+    return freq_df
+
+def print_label_frequency(freq_df):
+    """
+    Print the label frequency DataFrame in a formatted manner.
+
+    Parameters:
+    - freq_df (pd.DataFrame): DataFrame containing 'Label_key', 'Class_name', and 'Frequency'.
+    """
+    print("Label_key, Class_name, Frequency")
+    for _, row in freq_df.iterrows():
+        print(row['Label_key'], row['Class_name'], row['Frequency'])
+
+
+
+def filter_voxels_by_whitelist(map_to_majority, label_to_class, whitelist):
+    """
+    Filter voxels to include only those whose class names are in the whitelist.
+
+    Parameters:
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    - whitelist (set): Set of class names to retain.
+
+    Returns:
+    - filtered_voxel_ids (set): Set of voxel IDs that are in the whitelist.
+    - labels_wl (set): Set of label keys that are in the whitelist.
+    """
+    # Create a set of label keys that correspond to the whitelisted class names
+    labels_wl = {label for label, class_name in label_to_class.items() if class_name in whitelist}
+    
+    # Filter voxel IDs whose labels are in labels_wl
+    filtered_voxel_ids = {vox_id for vox_id, label in map_to_majority.items() if label in labels_wl}
+    
+    return filtered_voxel_ids, labels_wl
+
+
+
+def print_filtered_voxels(filtered_voxel_ids, map_to_majority, label_to_class):
+    """
+    Print the voxel IDs and their corresponding class names.
+
+    Parameters:
+    - filtered_voxel_ids (set): Set of voxel IDs that have been filtered.
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    """
+    print("Filtered Voxel IDs and their Class Names:")
+    for vox_id in filtered_voxel_ids:
+        class_name = label_to_class.get(map_to_majority[vox_id], 'Unknown')
+        print(vox_id, class_name)
+
+
+# plane_fitting.py
+
+import logging
+
+def filter_voxels_by_whitelist(map_to_majority, label_to_class, whitelist):
+    """
+    Filter voxels to include only those whose class names are in the whitelist.
+
+    Parameters:
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    - whitelist (set): Set of class names to retain.
+
+    Returns:
+    - filtered_voxel_ids (set): Set of voxel IDs that are in the whitelist.
+    - labels_wl (set): Set of label keys that are in the whitelist.
+    """
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    # Create a set of label keys that correspond to the whitelisted class names
+    labels_wl = {label for label, class_name in label_to_class.items() if class_name in whitelist}
+    logger.info(f"Number of labels in whitelist: {len(labels_wl)}")
+    
+    # Filter voxel IDs whose labels are in labels_wl
+    filtered_voxel_ids = {vox_id for vox_id, label in map_to_majority.items() if label in labels_wl}
+    logger.info(f"Number of voxels after filtering by whitelist: {len(filtered_voxel_ids)}")
+    
+    return filtered_voxel_ids, labels_wl
+
+def print_filtered_voxels(filtered_voxel_ids, map_to_majority, label_to_class):
+    """
+    Print the voxel IDs and their corresponding class names.
+
+    Parameters:
+    - filtered_voxel_ids (set): Set of voxel IDs that have been filtered.
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    """
+    print("Filtered Voxel IDs and their Class Names:")
+    for vox_id in filtered_voxel_ids:
+        class_name = label_to_class.get(map_to_majority[vox_id], 'Unknown')
+        print(vox_id, class_name)
+
+
+# plane_fitting.py
+
+def run_plane_fitting_on_voxels(filtered_voxel_ids, voxel_pointclouds):
+    """
+    Run plane fitting on the filtered voxels and store the plane parameters and RMSE.
+
+    Parameters:
+    - filtered_voxel_ids (set): Set of voxel IDs that have been filtered.
+    - voxel_pointclouds (dict): Mapping from voxel ID to its point cloud data.
+
+    Returns:
+    - plane_params (dict): Dictionary storing the plane parameters and RMSE for each voxel.
+    """
+    plane_params = {}
+    
+    for vox_id in filtered_voxel_ids:
+        # Get the points in the voxel
+        points = voxel_pointclouds[vox_id]
+        
+        # Run plane fitting using least squares
+        plane, rmse = fit_plane_least_squares(points)
+        
+        # Store the plane parameters and RMSE in the dictionary
+        plane_params[vox_id] = (plane, rmse)
+    
+    return plane_params
+
+
+
+def print_plane_fitting_results(plane_params, map_to_majority, label_to_class):
+    """
+    Print the RMSE for each voxel after plane fitting, along with the corresponding class name.
+
+    Parameters:
+    - plane_params (dict): Dictionary storing the plane parameters and RMSE for each voxel.
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    """
+    for vox_id, (plane, rmse) in plane_params.items():
+        class_name = label_to_class.get(map_to_majority[vox_id], 'Unknown')
+        print(f"Voxel ID: {vox_id}, RMSE: {rmse:.4f}, Class: {class_name}")
+
+
+
+# plane_fitting.py
+
+def aggregate_rmse_by_label(plane_params, map_to_majority):
+    """
+    Aggregate RMSE values by label. For each label, a list of RMSE values is stored.
+
+    Parameters:
+    - plane_params (dict): Dictionary storing the plane parameters and RMSE for each voxel.
+    - map_to_majority (dict): Mapping from voxel ID to majority label.
+
+    Returns:
+    - rmse_map (dict): Dictionary where the key is the label and the value is a list of RMSE values.
+    """
+    rmse_map = {}
+    
+    for key, (_, rmse_value) in plane_params.items():
+        label = map_to_majority[key]
+        if label in rmse_map:
+            rmse_map[label].append(rmse_value)
+        else:
+            rmse_map[label] = [rmse_value]
+    
+    return rmse_map
+
+
+
+def plot_rmse_violin(rmse_map, label_to_class, figsize=(10, 6), title='Violin Plot of RMSE Values by Label'):
+    """
+    Plot a violin plot of RMSE values by label.
+
+    Parameters:
+    - rmse_map (dict): Dictionary where the key is the label and the value is a list of RMSE values.
+    - label_to_class (dict): Dictionary mapping label keys to class names.
+    - figsize (tuple, optional): Size of the figure. Default is (10, 6).
+    - title (str, optional): Title of the plot. Default is 'Violin Plot of RMSE Values by Label'.
+    """
+    # Prepare data for the violin plot
+    data = []
+    labels = []
+    
+    for label, rmses in rmse_map.items():
+        data.extend(rmses)
+        labels.extend([label_to_class.get(label, 'Unknown')] * len(rmses))
+    
+    # Create a violin plot
+    plt.figure(figsize=figsize)
+    sns.violinplot(x=labels, y=data)
+    
+    # Add labels and title
+    plt.xlabel('Label')
+    plt.ylabel('RMSE Value')
+    plt.title(title)
+    
+    # Show the plot
+    plt.xticks(rotation=45)  # Rotate x-axis labels if needed
+    plt.show()
