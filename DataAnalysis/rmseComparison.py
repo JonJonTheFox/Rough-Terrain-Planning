@@ -1,9 +1,7 @@
 import csv
-import voxel3d as v3d
+from Voxelization import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
-from scipy.stats import ttest_ind
-import random
 import plotly.express as px
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -257,7 +255,7 @@ if __name__ == "__main__":
     lidar_dir1 = 'goose_3d_val/lidar/val/2022-07-22_flight'
     labels_dir1 = 'goose_3d_val/labels/val/2022-07-22_flight'
 
-    csv_file = 'goose_3d_val/goose_label_mapping.csv'
+    csv_file = '../goose_3d_val/goose_label_mapping.csv'
 
     # Image lists for comparison
     image_list1 = [

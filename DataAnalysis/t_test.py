@@ -1,6 +1,6 @@
 import csv
 
-import voxel3d as v3d
+from Voxelization import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
 from scipy.stats import ttest_ind
@@ -137,9 +137,9 @@ def run_experiment(lidar_dir, labels_dir, csv_file, target_class1, target_class2
 
 if __name__ == "__main__":
     # Directories
-    lidar_dir = 'goose_3d_val/lidar/val/2022-12-07_aying_hills'
-    labels_dir = 'goose_3d_val/labels/val/2022-12-07_aying_hills'
-    csv_file = 'goose_3d_val/goose_label_mapping.csv'
+    lidar_dir = '../goose_3d_val/lidar/val/2022-12-07_aying_hills'
+    labels_dir = '../goose_3d_val/labels/val/2022-12-07_aying_hills'
+    csv_file = '../goose_3d_val/goose_label_mapping.csv'
 
     # Prompt for the class labels to compare
     target_class1 = input("Enter the class for image set 1 (e.g., 'low_grass'): ")
