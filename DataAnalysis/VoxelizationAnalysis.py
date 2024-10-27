@@ -120,7 +120,7 @@ if __name__ == "__main__":
     # Directories for the LiDAR data
     lidar_dir1 = 'goose_3d_val/lidar/val/2022-07-22_flight'
     labels_dir1 = 'goose_3d_val/labels/val/2022-07-22_flight'
-    csv_file = 'goose_3d_val/goose_label_mapping.csv'
+    csv_file = '../goose_3d_val/goose_label_mapping.csv'
 
     # LiDAR file prefixes
     image_list1 = [

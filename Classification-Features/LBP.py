@@ -1,9 +1,8 @@
 import csv
-import voxel3d as v3d
+from Voxelization import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
 from scipy.stats import ttest_ind
-import random
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
@@ -142,10 +141,10 @@ def test_dynamic_lbp_function(lidar_dir, labels_dir, csv_file, image_list, high_
 
 if __name__ == "__main__":
     # Directories for the lidar and label data
-    lidar_dir = 'goose_3d_val/lidar/val/2022-07-22_flight'
-    labels_dir = 'goose_3d_val/labels/val/2022-07-22_flight'
+    lidar_dir = '../goose_3d_val/lidar/val/2022-07-22_flight'
+    labels_dir = '../goose_3d_val/labels/val/2022-07-22_flight'
 
-    csv_file = 'goose_3d_val/goose_label_mapping.csv'
+    csv_file = '../goose_3d_val/goose_label_mapping.csv'
 
     # Define the labels for high grass and low grass (these should correspond to the label IDs in your dataset)
     high_grass_label = 51  # Example label ID for high grass
@@ -161,4 +160,4 @@ if __name__ == "__main__":
     ]
 
     # Run the dynamic LBP testing function
-    test_dynamic_lbp_function(lidar_dir, labels_dir, csv_file, image_list, high_grass_label, low_grass_label, k_neighbors=10)
+    test_dynamic_lbp_function(lidar_dir, labels_dir, csv_file, image_list, high_grass_label, low_grass_label, k_neighbors=15)

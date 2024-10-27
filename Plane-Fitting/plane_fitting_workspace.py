@@ -1,7 +1,6 @@
-import voxel3d as v3d
+from Voxelization import voxel3d as v3d
 import plane_Fitting as pf
 import numpy as np
-import pandas as pd
 
 # The following paths require the "testing data" to be at the same level as the script
 prefix = '2022-07-22_flight__0254_1658494839082804823'

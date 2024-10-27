@@ -367,23 +367,9 @@ def apply_threshold(pointcloud, labels, z_treshold):
     return pointcloud_, labels_
 
 
-
-
 def preprocess_voxels(voxel_labels, pointcloud, labels, min_len=10, proportion_threshold=0.7):
     """
     Preprocess voxels by mapping each voxel to its majority label and filtering based on point count and label proportion.
-
-    Parameters:
-    - voxel_labels (array-like): Array of voxel labels for each point.
-    - pointcloud (np.ndarray): Array of point cloud data.
-    - labels (array-like): Array of labels corresponding to each point.
-    - min_len (int, optional): Minimum number of points required in a voxel to consider it. Default is 10.
-    - proportion_threshold (float, optional): Minimum proportion of the majority label within a voxel to retain it. Default is 0.7.
-
-    Returns:
-    - map_to_majority (dict): Mapping from voxel ID to its majority label.
-    - voxel_pointclouds (dict): Mapping from voxel ID to its point cloud data.
-    - voxel_ids_after_preprocessing (set): Set of voxel IDs that passed the preprocessing filters.
     """
     # Ensure that voxel_labels and labels are NumPy arrays
     voxel_labels = np.array(voxel_labels)
@@ -429,8 +415,6 @@ def preprocess_voxels(voxel_labels, pointcloud, labels, min_len=10, proportion_t
         voxel_ids_after_preprocessing.add(vox_id)
     
     return map_to_majority, voxel_pointclouds, voxel_ids_after_preprocessing
-
-
 
 
 def analyze_label_frequency(map_to_majority, label_to_class, sort_order='ascending'):
@@ -586,7 +570,7 @@ def run_plane_fitting_on_voxels(filtered_voxel_ids, voxel_pointclouds):
         points = voxel_pointclouds[vox_id]
         
         # Run plane fitting using least squares
-        plane, rmse = fit_plane_least_squares(points)
+        coef, plane, rmse = fit_plane_least_squares(points)
         
         # Store the plane parameters and RMSE in the dictionary
         plane_params[vox_id] = (plane, rmse)
