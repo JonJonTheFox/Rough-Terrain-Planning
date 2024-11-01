@@ -2,14 +2,18 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 from Voxelization import voxel3d as v3d
 import PlaneFitting.plane_Fitting as pf
-import numpy as np
 import os
 from datetime import datetime
+import numpy as np
+import pandas as pd
+import logging
+from scipy.spatial import ConvexHull
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+from scipy.stats import skew
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-import pandas as pd
-from sklearn.neighbors import NearestNeighbors
 
 
 # Function to apply LBP on a voxelized point cloud
@@ -67,41 +71,138 @@ def map_labels_to_categories(label_mapping, label_key):
         return 2
 
 
+
+
+# Additional imports based on existing usage
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+# Function to center the point cloud
+def center_point_cloud(point_cloud):
+    centroid = np.mean(point_cloud[:, :3], axis=0)
+    centered_cloud = point_cloud.copy()
+    centered_cloud[:, :3] -= centroid  # Subtract the centroid from all points (XYZ only)
+    return centered_cloud
+
+
+# Function to compute the convex hull volume
+def compute_convex_hull_volume(point_cloud):
+    if len(point_cloud) < 4:
+        logging.warning("Not enough points to compute convex hull volume. Returning 0.")
+        return 0.0
+    hull = ConvexHull(point_cloud[:, :3])  # Use only XYZ coordinates
+    return hull.volume
+
+
+# Function to compute the density of points
+def compute_density(point_cloud):
+    volume = compute_convex_hull_volume(point_cloud)
+    if volume == 0:
+        logging.warning("Convex hull volume is 0. Cannot compute density.")
+        return 0.0
+    return len(point_cloud) / volume  # Number of points per unit volume
+
+
+# Function to perform PCA and compute variance ratios, flatness, and elongation
+def compute_pca(point_cloud):
+    pca = PCA(n_components=3)
+    pca.fit(point_cloud[:, :3])  # Use only XYZ coordinates
+    variance_ratios = pca.explained_variance_ratio_
+    flatness = variance_ratios[1] / variance_ratios[2] if variance_ratios[2] > 0 else 0
+    elongation = variance_ratios[0] / variance_ratios[1] if variance_ratios[1] > 0 else 0
+    return variance_ratios, flatness, elongation
+
+
+# Function to compute surface roughness
+def compute_surface_roughness(point_cloud, k=10):
+    if len(point_cloud) < k:
+        logging.warning("Not enough points to compute surface roughness. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k).fit(point_cloud[:, :3])
+    _, indices = neighbors.kneighbors(point_cloud[:, :3])
+    roughness = []
+
+    for idx in indices:
+        local_points = point_cloud[idx, :3]
+        local_pca = PCA(n_components=1)
+        local_pca.fit(local_points)
+        roughness.append(local_pca.explained_variance_ratio_[0])
+
+    return np.mean(roughness)
+
+
+# Function to compute height variability and vertical skewness
+def compute_height_variability(point_cloud):
+    z_values = point_cloud[:, 2]
+    return np.std(z_values), skew(z_values)
+
+
+# Function to compute curvature
+def compute_curvature(point_cloud, k=10):
+    if len(point_cloud) < k:
+        logging.warning("Not enough points to compute curvature. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k).fit(point_cloud[:, :3])
+    _, indices = neighbors.kneighbors(point_cloud[:, :3])
+    curvatures = []
+
+    for idx in indices:
+        local_points = point_cloud[idx, :3]
+        pca = PCA(n_components=3)
+        pca.fit(local_points)
+        curvatures.append(pca.explained_variance_ratio_[2])
+
+    return np.mean(curvatures)
+
+
+# Function to compute the mean nearest neighbor distance
+def compute_mean_nearest_neighbor_distance(point_cloud, k=1):
+    if len(point_cloud) <= k:
+        logging.warning("Not enough points to compute mean nearest neighbor distance. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k + 1).fit(point_cloud[:, :3])
+    distances, _ = neighbors.kneighbors(point_cloud[:, :3])
+    return np.mean(distances[:, 1:])
+
+
+# Function to compute intensity-based features (mean, std, skewness)
+def compute_intensity_features(point_cloud):
+    intensities = point_cloud[:, 3]
+    mean_intensity = np.mean(intensities)
+    std_intensity = np.std(intensities)
+    skew_intensity = skew(intensities)
+    return mean_intensity, std_intensity, skew_intensity
+
+
+# Combined function to compute all properties for a given point cloud
+# Other imports and functions remain unchanged
+
 def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar_dir, labels_dir, csv_file,
                                                                    label_mapping, z_threshold=1, voxel_size=5,
                                                                    num_voxels=100000, k_neighbors=6,
                                                                    min_len=20, proportion_threshold=0.9):
-    """
-    Processes a single image and returns RMSE values, LBP values, number of points, density, and a new feature:
-    whether the voxel is an 'obstacle', 'passable', 'low_grass', or 'high_grass', while applying voxel preprocessing.
-    """
-    # Load pointcloud and labels
+    # Load point cloud and labels
     lidar_data, labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
-
-    # Apply z-threshold to pointcloud and labels (filter the point cloud and corresponding labels)
     pointcloud, labels = pf.apply_threshold(lidar_data, labels, z_threshold)
-
-    # Voxelize the point cloud
     voxel_labels_, voxel_map_, unique_voxel_labels_ = v3d.voxelize_point_cloud_2d(pointcloud, voxel_size=voxel_size)
 
-    # Store the points for each voxel
     voxel_to_points = {voxel_label: [] for voxel_label in unique_voxel_labels_}
-    total_points = len(pointcloud)  # Track initial number of points
-    retained_points = 0  # Initialize counter for retained points after filtering
+    total_points = len(pointcloud)
+    retained_points = 0
 
     for idx, voxel_label in enumerate(voxel_labels_):
-        voxel_to_points[voxel_label].append(idx)  # Map the point index to its corresponding voxel label
+        voxel_to_points[voxel_label].append(idx)
 
-    all_voxel_rmse = []
-    num_points_list = []
-    density_list = []
-    lbp_list = []
-    majority_labels = []
-    class_categories = []
+    # Lists to hold computed features
+    all_voxel_rmse, num_points_list, density_list, lbp_list, majority_labels, class_categories = [], [], [], [], [], []
+    convex_hull_volumes, densities, pca_var_pc1, pca_var_pc2, pca_var_pc3, flatnesses, elongations, roughnesses, \
+    height_variabilities, skewnesses, curvatures, mean_nn_distances, mean_intensities, std_intensities, \
+    skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
 
     voxel_volume = voxel_size ** 3
 
-    # Iterate over each voxel
     for voxel_label, point_indices in voxel_to_points.items():
         points_in_voxel = pointcloud[point_indices]
         labels_in_voxel = labels[point_indices]
@@ -109,7 +210,6 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
         if len(points_in_voxel) < min_len:
             continue
 
-        # Calculate the majority label in the voxel
         unique_labels, label_counts = np.unique(labels_in_voxel, return_counts=True)
         majority_label = unique_labels[np.argmax(label_counts)]
         majority_proportion = label_counts.max() / label_counts.sum()
@@ -117,18 +217,9 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
         if majority_proportion < proportion_threshold:
             continue
 
-        # Increment the count of retained points after passing both filters
         retained_points += len(points_in_voxel)
-
-        # Pass only the points and voxel labels specific to this voxel
         voxel_planes_, rmse_ = pf.compute_voxel_planes(points_in_voxel, np.array([voxel_label] * len(points_in_voxel)))
-
-        # Calculate LBP for the filtered point cloud
-        # Modify the LBP calculation call in the main processing function
-        voxel_labels_filtered = voxel_labels_[point_indices]  # Only labels relevant to points in the current voxel
-        lbp_patterns = apply_dynamic_lbp_to_voxels(points_in_voxel, labels_in_voxel, voxel_labels_filtered,
-                                                   # filtered labels
-                                                   high_grass_label=None, low_grass_label=None,
+        lbp_patterns = apply_dynamic_lbp_to_voxels(points_in_voxel, labels_in_voxel, voxel_labels_[point_indices],
                                                    k_neighbors=k_neighbors)
 
         if voxel_label not in rmse_:
@@ -136,35 +227,67 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
 
         rmse_value = rmse_[voxel_label]
         all_voxel_rmse.append(rmse_value)
-
-        # Number of points and density
         num_points = len(points_in_voxel)
         num_points_list.append(num_points)
         density_list.append(num_points / voxel_volume)
-
-        # Store the majority label
         majority_labels.append(majority_label)
-
-        # Get the LBP value for this voxel
         lbp_value = lbp_patterns.get(voxel_label, 0)
         lbp_list.append(lbp_value)
+        class_categories.append(map_labels_to_categories(label_mapping, majority_label))
 
-        # Map the majority label to the new class categories (obstacle, passable, or grass)
-        class_category = map_labels_to_categories(label_mapping, majority_label)
-        class_categories.append(class_category)
+        # Calculate additional features for each voxel
+        convex_hull_volumes.append(compute_convex_hull_volume(points_in_voxel))
+        densities.append(compute_density(points_in_voxel))
+        variance_ratios, flatness, elongation = compute_pca(points_in_voxel)
+        # Split PCA variance ratios into separate components
+        pca_var_pc1.append(variance_ratios[0])
+        pca_var_pc2.append(variance_ratios[1])
+        pca_var_pc3.append(variance_ratios[2])
+        flatnesses.append(flatness)
+        elongations.append(elongation)
+        roughnesses.append(compute_surface_roughness(points_in_voxel))
+        height_var, skewness = compute_height_variability(points_in_voxel)
+        height_variabilities.append(height_var)
+        skewnesses.append(skewness)
+        curvatures.append(compute_curvature(points_in_voxel))
+        mean_nn_distances.append(compute_mean_nearest_neighbor_distance(points_in_voxel))
+        mean_intensity, std_intensity, skew_intensity = compute_intensity_features(points_in_voxel)
+        mean_intensities.append(mean_intensity)
+        std_intensities.append(std_intensity)
+        skew_intensities.append(skew_intensity)
 
-    # Calculate and print the percentage of data retained
     retention_percentage = (retained_points / total_points) * 100
     print(f"Total initial points: {total_points}")
     print(f"Points retained after filtering: {retained_points}")
     print(f"Percentage of data retained after filtering: {retention_percentage:.2f}%")
 
-    return all_voxel_rmse, num_points_list, density_list, lbp_list, majority_labels, class_categories
+    # Create dataframe with all features
+    data = {
+        'RMSE': all_voxel_rmse,
+        'Num_Points': num_points_list,
+        'Density': density_list,
+        'LBP': lbp_list,
+        'Class': majority_labels,
+        'Category': class_categories,
+        'ConvexHullVolume': convex_hull_volumes,
+        'PCA_Var_PC1': pca_var_pc1,
+        'PCA_Var_PC2': pca_var_pc2,
+        'PCA_Var_PC3': pca_var_pc3,
+        'Flatness': flatnesses,
+        'Elongation': elongations,
+        'SurfaceRoughness': roughnesses,
+        'HeightVariability': height_variabilities,
+        'HeightSkewness': skewnesses,
+        'Curvature': curvatures,
+        'MeanNN_Distance': mean_nn_distances,
+        'MeanIntensity': mean_intensities,
+        'StdIntensity': std_intensities,
+        'SkewIntensity': skew_intensities
+    }
+    df = pd.DataFrame(data)
+    return df
 
-
-
-
-# Run function
+# Modified main function to run classification with the new dataframe
 def run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, labels_dir, csv_file, image_list,
                                                                     label_mapping, iterations=1, num_voxels=100000,
                                                                     k_neighbors=6):
@@ -175,34 +298,22 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, l
 
     for i in range(iterations):
         print(f"Running real data test iteration {i + 1}/{iterations}...")
-        all_voxel_rmse, num_points, density, lbp_values, majority_labels, class_categories = [], [], [], [], [], []
+        dfs = []
 
         for prefix in image_list:
-            rmse, num_points_voxel, density_voxel, lbp_voxel, majority_labels_voxel, class_categories_voxel = process_image_with_metrics_and_lbp_and_obstacle_classification(
-                prefix, lidar_dir, labels_dir, csv_file, label_mapping=label_mapping, num_voxels=num_voxels,
-                k_neighbors=k_neighbors)
-            all_voxel_rmse.extend(rmse)
-            num_points.extend(num_points_voxel)
-            density.extend(density_voxel)
-            lbp_values.extend(lbp_voxel)
-            majority_labels.extend(majority_labels_voxel)
-            class_categories.extend(class_categories_voxel)
+            df = process_image_with_metrics_and_lbp_and_obstacle_classification(
+                prefix, lidar_dir, labels_dir, csv_file, label_mapping, num_voxels=num_voxels, k_neighbors=k_neighbors)
+            dfs.append(df)
 
-        data = {
-            'RMSE': all_voxel_rmse,
-            'Num_Points': num_points,
-            'Density': density,
-            'LBP': lbp_values,
-            'Class': majority_labels,
-            'Category': class_categories
-        }
-        df = pd.DataFrame(data)
-        X = df[['RMSE','Num_Points', 'Density', 'LBP']]
-        y = df['Category']
+        combined_df = pd.concat(dfs, ignore_index=True)
+        X = combined_df.drop(columns=['Class', 'Category'])
+        y = combined_df['Category']
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
         clf = RandomForestClassifier(n_estimators=100)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
+
         accuracy = accuracy_score(y_test, y_pred)
         print(f"Iteration {i + 1}: Accuracy = {accuracy}")
         print(f"Classification Report:\n {classification_report(y_test, y_pred)}")
@@ -218,13 +329,14 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, l
         plot_filename = os.path.join(output_dir, f'confusion_matrix_{i + 1}.png')
         plt.savefig(plot_filename)
         plt.close()
-        print(f"Confusion matrix for iteration {i + 1} saved to {plot_filename}")
+
         results.append({
             'Iteration': i + 1,
             'Accuracy': accuracy,
             'Classification Report': classification_report(y_test, y_pred, output_dict=True)
         })
-        df.to_csv(os.path.join(output_dir, f'iteration_{i + 1}_real_data.csv'), index=False)
+
+        combined_df.to_csv(os.path.join(output_dir, f'iteration_{i + 1}_real_data.csv'), index=False)
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(output_dir, 'classification_real_data_results.csv'), index=False)
