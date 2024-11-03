@@ -1,87 +1,125 @@
 import numpy as np
-import open3d as o3d
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import import_helper as ih
+from matplotlib.patches import Patch
 
+class PointCloudVisualizer:
+    def __init__(self):
+        self.metadata_map = {}
+        self.rgb_map = {}
+        self.load_metadata()
 
-def load_point_cloud(file_path):
-    point_cloud = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)
-    print(f"Loaded point cloud with shape: {point_cloud.shape}")  # Debug print
-    return point_cloud
+    def load_metadata(self):
+        """Load and prepare metadata for visualization."""
+        try:
+            metadata = ih.load_label_metadata()
+            self.metadata_map = ih.get_metadata_map(metadata)
+            self.rgb_map = ih.get_rgb_map(metadata)
+        except Exception as e:
+            print(f"Error loading metadata: {e}")
+            raise
 
-def get_label_colors(sem_labels):
-    unique_labels = np.unique(sem_labels)
-    num_colors = len(unique_labels)
-    colormap = plt.get_cmap('hsv')
+    def create_color_legend(self, labels):
+        """Create a color legend for the given labels."""
+        legend_elements = []
+        for label in np.unique(labels):
+            color = np.array(self.rgb_map.get(label, (128, 128, 128))) / 255.0
+            legend_elements.append(Patch(facecolor=color, edgecolor='black',
+                                         label=self.metadata_map.get(label, 'Unknown')))
+        return legend_elements
 
-    # Initialize an array to store the colors
-    colors = np.zeros((sem_labels.shape[0], 3))
+    def plot_pointcloud(self, short_name, index):
+        """Plot a 3D pointcloud with colored labels and a color legend."""
+        try:
+            points, labels = ih.import_pc_and_labels(short_name, index)
+            
+            fig = plt.figure(figsize=(15, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Color points based on labels
+            colors = [self.rgb_map.get(label, (128, 128, 128)) for label in labels]
+            colors = np.array(colors) / 255.0  # Normalize RGB values
+            
+            scatter = ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=colors, s=1)
+            
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_title(f'PointCloud Visualization: {short_name} - Index {index}')
+            
+            # Add color legend
+            legend_elements = self.create_color_legend(labels)
+            ax.legend(handles=legend_elements, title="Labels", loc='center left', bbox_to_anchor=(1, 0.5))
+            
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"Error plotting pointcloud: {e}")
 
-    for i, label in enumerate(unique_labels):
-        color = colormap(i / num_colors)[:3]  # Get RGB values from the colormap
-        colors[sem_labels == label] = color  # Assign color to corresponding points
+    def plot_label_distribution(self, short_name, index):
+        """Plot the distribution of labels for a specific pointcloud with a color legend."""
+        try:
+            _, labels = ih.import_pc_and_labels(short_name, index)
+            
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            label_names = [self.metadata_map.get(label, 'Unknown') for label in unique_labels]
+            
+            fig, ax = plt.subplots(figsize=(15, 8))
+            colors = [self.rgb_map.get(label, (128, 128, 128)) for label in unique_labels]
+            colors = np.array(colors) / 255.0  # Normalize RGB values
+            
+            bars = ax.bar(label_names, counts, color=colors)
+            ax.set_xticklabels(label_names, rotation=90)
+            ax.set_title(f'Label Distribution: {short_name} - Index {index}')
+            ax.set_ylabel('Count')
+            ax.set_xlabel('Labels')
+            
+            # Add color legend
+            legend_elements = self.create_color_legend(unique_labels)
+            ax.legend(handles=legend_elements, title="Labels", loc='center left', bbox_to_anchor=(1, 0.5))
+            
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"Error plotting label distribution: {e}")
 
-    return colors
+    def plot_2d_skyview(self, short_name, index):
+        """Plot a 2D skyview of the pointcloud, colored by labels, with a color legend."""
+        try:
+            points, labels = ih.import_pc_and_labels(short_name, index)
+            
+            fig, ax = plt.subplots(figsize=(15, 12))
+            
+            colors = [self.rgb_map.get(label, (128, 128, 128)) for label in labels]
+            colors = np.array(colors) / 255.0  # Normalize RGB values
+            
+            scatter = ax.scatter(points[:, 0], points[:, 1], c=colors, s=1)
+            
+            ax.set_title(f'2D Skyview: {short_name} - Index {index}')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.axis('equal')
+            
+            # Add color legend
+            legend_elements = self.create_color_legend(labels)
+            ax.legend(handles=legend_elements, title="Labels", loc='center left', bbox_to_anchor=(1, 0.5))
+            
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"Error plotting 2D skyview: {e}")
 
+def main():
+    visualizer = PointCloudVisualizer()
+    
+    # Example usage
+    short_name = "flight"  # Replace with your desired dataset
+    index = 0  # Replace with your desired index
+    
+    #visualizer.plot_pointcloud(short_name, index)
+    #visualizer.plot_label_distribution(short_name, index)
+    visualizer.plot_2d_skyview(short_name, index)
 
-def load_label(file_path):
-    label = np.fromfile(file_path, dtype=np.uint32).reshape(-1)
-    sem_label = label & 0xFFFF  # semantic label in lower half
-    inst_label = label >> 16  # instance id in upper half
-    print(f"Loaded labels with shape: {sem_label.shape}")  # Debug print
-    return sem_label, inst_label
-
-
-def get_patch_points_and_labels_by_grid(point_cloud, sem_labels, x_index, y_index, patch_size=50):
-    # Calculate the boundaries of the patch
-    x_min = x_index * patch_size
-    x_max = (x_index + 1) * patch_size
-    y_min = y_index * patch_size
-    y_max = (y_index + 1) * patch_size
-
-    # Filter points within the calculated patch boundaries
-    patch_mask = (
-        (point_cloud[:, 0] >= x_min) & (point_cloud[:, 0] < x_max) &
-        (point_cloud[:, 1] >= y_min) & (point_cloud[:, 1] < y_max)
-    )
-    patch_points = point_cloud[patch_mask]
-    patch_labels = sem_labels[patch_mask]
-
-    return patch_points, patch_labels
-
-
-def visualize_with_open3d(point_cloud, sem_labels):
-    # Get the original label colors
-    label_colors = get_label_colors(sem_labels)
-
-    # Create Open3D point cloud object
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(point_cloud[:, :3])
-    pcd.colors = o3d.utility.Vector3dVector(label_colors)
-
-    # Visualize
-    o3d.visualization.draw_geometries([pcd])
-
-
-# Example usage
-point_cloud_path = 'goose_3d_val/lidar/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
-label_path = 'goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
-
-# Load the point cloud data
-point_cloud = load_point_cloud(point_cloud_path)
-
-# Load the semantic labels
-sem_labels, inst_labels = load_label(label_path)
-
-# Define the grid indices (e.g., x=0, y=0 corresponds to a patch from x=[0,50), y=[0,50))
-x_index, y_index = 0, 0  # Modify these indices to select different patches
-
-# Extract points and labels from the defined grid patch
-patch_points, patch_labels = get_patch_points_and_labels_by_grid(point_cloud, sem_labels, x_index, y_index, patch_size=100)
-
-# Visualize the patch with semantic labels
-visualize_with_open3d(patch_points, patch_labels)
-
-
-
-
-
+if __name__ == "__main__":
+    main()
