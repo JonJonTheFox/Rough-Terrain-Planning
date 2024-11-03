@@ -1,0 +1,98 @@
+# voxel_utils.py
+
+import numpy as np
+import pandas as pd
+from collections import defaultdict
+import logging
+from typing import Tuple, List, Dict, Optional
+
+class VoxelGrid:
+    def __init__(self, voxel_size: float = 1.0):
+        """
+        Initialize a voxel grid with given voxel size.
+        
+        Parameters:
+        - voxel_size: Size of voxel cube edges in same units as point cloud
+        """
+        self.voxel_size = voxel_size
+        self.voxel_dict = defaultdict(list)
+        self.voxel_labels = defaultdict(list)
+        
+    def _point_to_voxel_key(self, point: np.ndarray) -> Tuple[int, int, int]:
+        """Convert a point to its voxel grid indices."""
+        voxel_x = int(np.floor(point[0] / self.voxel_size))
+        voxel_y = int(np.floor(point[1] / self.voxel_size))
+        voxel_z = int(np.floor(point[2] / self.voxel_size))
+        return (voxel_x, voxel_y, voxel_z)
+    
+    def add_points(self, points: np.ndarray, labels: np.ndarray):
+        """
+        Add points and their labels to the voxel grid.
+        
+        Parameters:
+        - points: Nx4 array of points (x, y, z, intensity)
+        - labels: N array of label indices
+        """
+        for point_idx in range(len(points)):
+            point = points[point_idx]
+            label = labels[point_idx]
+            voxel_key = self._point_to_voxel_key(point)
+            self.voxel_dict[voxel_key].append(point)
+            self.voxel_labels[voxel_key].append(label)
+            
+    def get_voxel_statistics(self) -> Dict:
+        """Calculate various statistics about the voxels."""
+        stats = {
+            'total_voxels': len(self.voxel_dict),
+            'points_per_voxel': {},
+            'label_distribution': defaultdict(int),
+            'voxel_label_counts': defaultdict(lambda: defaultdict(int))
+        }
+        
+        # Calculate points per voxel distribution
+        for voxel_key, points in self.voxel_dict.items():
+            point_count = len(points)
+            if point_count not in stats['points_per_voxel']:
+                stats['points_per_voxel'][point_count] = 0
+            stats['points_per_voxel'][point_count] += 1
+            
+            # Calculate label distribution per voxel
+            labels = self.voxel_labels[voxel_key]
+            for label in labels:
+                stats['label_distribution'][label] += 1
+                stats['voxel_label_counts'][voxel_key][label] += 1
+        
+        return stats
+
+    def get_voxel_centers(self) -> np.ndarray:
+        """Return the center coordinates of all voxels."""
+        centers = []
+        for voxel_key in self.voxel_dict.keys():
+            x, y, z = voxel_key
+            center = np.array([
+                (x + 0.5) * self.voxel_size,
+                (y + 0.5) * self.voxel_size,
+                (z + 0.5) * self.voxel_size
+            ])
+            centers.append(center)
+        return np.array(centers)
+    
+    def get_dominant_labels_with_proportion(self) -> Dict:
+        """ Return the dominant label and its proportion for each voxel."""
+        dominant_labels = {}
+        for voxel_key, labels in self.voxel_labels.items():
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            
+            # Find the dominant label and its proportion
+            dominant_label_index = np.argmax(counts)
+            dominant_label = unique_labels[dominant_label_index]
+            total_count = np.sum(counts)
+            dominant_proportion = counts[dominant_label_index] / total_count
+            
+            # Store the dominant label and proportion as a dictionary
+            dominant_labels[voxel_key] = {
+                'label': dominant_label,
+                'proportion': dominant_proportion
+            }
+        
+        return dominant_labels
