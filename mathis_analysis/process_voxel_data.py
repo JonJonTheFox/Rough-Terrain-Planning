@@ -47,11 +47,20 @@ def process_single_dataset(dataset, voxel_size, min_num_points, min_proportion):
                 'dominant_proportion': dominant_labels[voxel_key]['proportion'],
                 'RMSE': stats['voxel_plane_rmse'][voxel_key],
                 'plane_coefficients': stats['voxel_plane_coefficients'][voxel_key],
-                'vertical_skewness': stats['vertical_skewness'][voxel_key],
                 'convex_hull_volume': stats['convex_hull_volume'][voxel_key],
                 'density': stats['density'][voxel_key],
                 'elevation_range': stats['elevation_range'][voxel_key],
-                'avg_intensity': stats['avg_intensity'][voxel_key]
+                'avg_intensity': stats['avg_intensity'][voxel_key],
+                'std_intensity': stats['std_intensity'][voxel_key],
+                'lbp': stats['lbp'][voxel_key],
+                'variance_ratios': stats['variance_ratios'][voxel_key],
+                'flatness': stats['flatness'][voxel_key],
+                'elongation': stats['elongation'][voxel_key],
+                'height_variability': stats['height_variability'][voxel_key],
+                'vertical_skewness': stats['vertical_skewness'][voxel_key],
+                #'curvature_avg': stats['curvature_avg'][voxel_key],
+                'mean_nn_distance': stats['mean_nn_distance'][voxel_key],
+                #'roughness': stats['roughness'][voxel_key],
             }
 
             # Replace None values with np.nan
@@ -62,8 +71,8 @@ def process_single_dataset(dataset, voxel_size, min_num_points, min_proportion):
 
 def process_voxel_data(
     voxel_size=1,
-    min_num_points=20,
-    min_proportion=0.8,
+    min_num_points=10,
+    min_proportion=0.6,
     output_file="processed_voxel_data.local/all_datasets_voxel_data.pkl"
 ):
     # Ensure the output directory exists
@@ -107,6 +116,6 @@ if __name__ == "__main__":
     process_voxel_data(
         voxel_size=1,
         min_num_points=20,
-        min_proportion=0.8,
+        min_proportion=1.0,
         output_file=output_file
     )

@@ -76,11 +76,20 @@ class VoxelGrid:
             'voxel_label_counts': defaultdict(lambda: defaultdict(int)),
             'voxel_plane_rmse': {},
             'voxel_plane_coefficients': {},
-            'vertical_skewness': {},
             'convex_hull_volume': {},
             'density': {},
             'elevation_range': {},
-            'avg_intensity': {}
+            'avg_intensity': {},
+            'std_intensity': {},
+            'lbp': {},
+            'variance_ratios': {},
+            'flatness': {},
+            'elongation': {},
+            'height_variability': {},
+            'vertical_skewness': {},
+            #'curvature_avg': {},
+            'mean_nn_distance': {},
+            #'roughness': {}
         }
         
         for voxel_key, points in self.voxel_dict.items():
@@ -102,8 +111,6 @@ class VoxelGrid:
                 stats['voxel_plane_rmse'][voxel_key] = None
                 stats['voxel_plane_coefficients'][voxel_key] = None
             
-            
-            stats['vertical_skewness'][voxel_key] = vu.calculate_vertical_skewness(points_3d)
             hull_volume = vu.calculate_convex_hull_volume(points_3d)
             stats['convex_hull_volume'][voxel_key] = hull_volume
         
@@ -111,9 +118,23 @@ class VoxelGrid:
                 stats['density'][voxel_key] = None
             else:     
                 stats['density'][voxel_key] = vu.calculate_density(points_3d, hull_volume)
+                
             stats['elevation_range'][voxel_key] = vu.calculate_elevation_range(points_3d)
-            
             stats['avg_intensity'][voxel_key] = np.mean(np.array(points)[:, 3])
+            stats['std_intensity'][voxel_key] = np.std(np.array(points)[:, 3])
+            stats['lbp'][voxel_key] = vu.apply_dynamic_lbp(points_3d)
+            variance_ratios, flatness, elongation = vu.compute_pca_metrics(points_3d)
+            stats['variance_ratios'][voxel_key] = variance_ratios
+            stats['flatness'][voxel_key] = flatness
+            stats['elongation'][voxel_key] = elongation
+            
+            height_variability, vertical_skewness = vu.compute_height_variability(points_3d)
+            stats['height_variability'][voxel_key] = height_variability
+            stats['vertical_skewness'][voxel_key] = vertical_skewness
+            
+            #stats['curvature_avg'][voxel_key] =0# vu.compute_curvature(points_3d)
+            stats['mean_nn_distance'][voxel_key] = vu.compute_mean_nearest_neighbor_distance(points_3d)
+            #stats['roughness'][voxel_key] = 0#vu.compute_surface_roughness(points_3d)
             
             
             # Label statistics

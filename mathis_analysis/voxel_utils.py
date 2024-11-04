@@ -2,6 +2,9 @@ import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 from typing import Tuple, Dict
 import logging
+from sklearn.neighbors import NearestNeighbors
+from sklearn.decomposition import PCA
+from scipy.stats import skew
 
 def fit_plane_least_squares(points: np.ndarray) -> Tuple[np.ndarray, float]:
     # ... (existing code from your fit_plane_least_squares function) ...
@@ -98,40 +101,109 @@ def calculate_elevation_range(points: np.ndarray) -> float:
     - Elevation range (max z - min z).
     """
     return np.max(points[:, 2]) - np.min(points[:, 2])
-'''
-def extract_features(points: np.ndarray, voxel_volume: float) -> Dict[str, float]:
+
+def calculate_avg_z_value(points: np.ndarray) -> float:
     """
-    Extract a variety of features from a point cloud within a voxel.
+    Calculate the average z value of points within a voxel.
     
     Parameters:
     - points: Nx3 numpy array of points in 3D space.
-    - voxel_volume: Volume of the voxel (to calculate density).
     
     Returns:
-    - Dictionary of features.
+    - Average z value.
     """
-    features = {}
-    
-    # Plane fitting
-    if points.shape[0] >= 3:
-        plane_coefficients, rmse = fit_plane_least_squares(points)
-        features['plane_rmse'] = rmse
-        features['plane_coefficients'] = plane_coefficients
-    else:
-        features['plane_rmse'] = None
-        features['plane_coefficients'] = None
+    return np.mean(points[:, 2])
 
-    # Vertical skewness
-    features['vertical_skewness'] = calculate_vertical_skewness(points)
-    
-    # Convex hull volume
-    features['convex_hull_volume'] = calculate_convex_hull_volume(points)
-    
-    # Density
-    features['density'] = calculate_density(points, voxel_volume)
-    
-    # Elevation range
-    features['elevation_range'] = calculate_elevation_range(points)
-    
-    return features
-'''
+
+def apply_dynamic_lbp(points: np.ndarray, k_neighbors: int = 6) -> int:
+    """
+    Applies a height-based Label Binary Pattern (LBP) to a single voxel's points.
+
+    Parameters:
+    - points_in_voxel: Nx3 array of points in 3D space within a single voxel.
+    - k_neighbors: Number of neighbors to consider for LBP calculation. Default is 6.
+
+    Returns:
+    - LBP pattern as an integer for the points in this voxel.
+    """
+    if len(points) < 2:
+        return 0  # Not enough points to calculate neighbors
+
+    # Initialize the nearest neighbors model
+    knn = NearestNeighbors(n_neighbors=min(k_neighbors, len(points)))
+    knn.fit(points)
+
+    # Calculate the centroid of the voxel points
+    voxel_centroid = np.mean(points, axis=0).reshape(1, -1)
+
+    # Find nearest neighbors to the centroid
+    distances, indices = knn.kneighbors(voxel_centroid)
+
+    # Calculate the LBP pattern based on height (z-coordinate) differences
+    lbp_value = 0
+    for i, neighbor_idx in enumerate(indices[0]):
+        neighbor_point = points[neighbor_idx]
+        if voxel_centroid[0][2] > neighbor_point[2]:  # Check if neighbor is lower in height
+            lbp_value |= (1 << i)  # Set the corresponding bit if height difference is positive
+
+    return lbp_value
+
+# Function to perform PCA and compute variance ratios, flatness, and elongation
+def compute_pca_metrics(points: np.ndarray) -> Tuple[np.ndarray, float, float]:
+    pca = PCA(n_components=3)
+    pca.fit(points[:, :3])  # Use only XYZ coordinates
+    variance_ratios = pca.explained_variance_ratio_
+    flatness = variance_ratios[1] / variance_ratios[2] if variance_ratios[2] > 0 else 0
+    elongation = variance_ratios[0] / variance_ratios[1] if variance_ratios[1] > 0 else 0
+    return variance_ratios, flatness, elongation
+
+# Function to compute height variability and vertical skewness
+def compute_height_variability(points: np.ndarray) -> Tuple[float, float]:
+    z_values = points[:, 2]
+    height_variability = np.std(z_values)
+    vertical_skewness = skew(z_values)
+    return height_variability, vertical_skewness
+
+
+# Function to compute curvature
+def compute_curvature(points: np.ndarray, k: int = 10) -> float:
+    if len(points) < k:
+        logging.warning("Not enough points to compute curvature. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k).fit(points[:, :3])
+    _, indices = neighbors.kneighbors(points[:, :3])
+    curvatures = []
+
+    for idx in indices:
+        local_points = points[idx, :3]
+        pca = PCA(n_components=3, random_state=1)
+        pca.fit(local_points)
+        curvatures.append(pca.explained_variance_ratio_[2])
+
+    return np.mean(curvatures)
+
+# Function to compute the mean nearest neighbor distance
+def compute_mean_nearest_neighbor_distance(points: np.ndarray, k: int = 1) -> float:
+    if len(points) <= k:
+        logging.warning("Not enough points to compute mean nearest neighbor distance. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k + 1).fit(points[:, :3])
+    distances, _ = neighbors.kneighbors(points[:, :3])
+    return np.mean(distances[:, 1:])  # Skip the first column (distance to self)
+
+# Function to compute surface roughness
+def compute_surface_roughness(points: np.ndarray, k: int = 10) -> float:
+    if len(points) < k:
+        logging.warning("Not enough points to compute surface roughness. Returning 0.")
+        return 0.0
+    neighbors = NearestNeighbors(n_neighbors=k).fit(points[:, :3])
+    _, indices = neighbors.kneighbors(points[:, :3])
+    roughness = []
+
+    for idx in indices:
+        local_points = points[idx, :3]
+        local_pca = PCA(n_components=1, random_state=1)
+        local_pca.fit(local_points)
+        roughness.append(local_pca.explained_variance_ratio_[0])
+
+    return np.mean(roughness)
