@@ -25,7 +25,7 @@ class DatasetGridVisualizer:
     def create_output_folder(self, short_name):
         """Create a folder to save images if it doesn't exist."""
         dir_path = os.path.dirname(os.path.abspath(__file__))
-        folder_path = os.path.join(dir_path, f'point_cloud_visualizations/{short_name}_images')
+        folder_path = os.path.join(dir_path, f'point_cloud_visualizations.local/{short_name}_images')
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
             print(f"Created folder: {folder_path}")
