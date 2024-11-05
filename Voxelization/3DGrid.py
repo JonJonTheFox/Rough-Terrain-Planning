@@ -63,8 +63,8 @@ def visualize_with_open3d(point_cloud, sem_labels):
 
 
 # Example usage
-point_cloud_path = 'goose_3d_val/lidar/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
-label_path = 'goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
+point_cloud_path = '../goose_3d_val/lidar/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_vls128.bin'
+label_path = '../goose_3d_val/labels/val/2022-12-07_aying_hills/2022-12-07_aying_hills__0000_1670420609181206687_goose.label'
 
 # Load the point cloud data
 point_cloud = load_point_cloud(point_cloud_path)
