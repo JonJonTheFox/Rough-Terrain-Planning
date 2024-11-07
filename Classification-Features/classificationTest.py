@@ -15,6 +15,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
+location_accuracies = {}
+
 
 # Function to apply LBP on a voxelized point cloud
 def apply_dynamic_lbp_to_voxels(pointcloud, labels, voxel_labels, high_grass_label=None, low_grass_label=None,
@@ -65,22 +67,20 @@ def map_labels_to_categories(label_mapping, label_key):
         return 8
     if label_mapping[label_key] in obstacle_labels:
         return 0
-    elif label_mapping[label_key] in passable_labels:
-        return 1
     elif label_mapping[label_key] == 'cobble':
-        return 2
+        return 1
     elif label_mapping[label_key] == 'gravel':
-        return 3
+        return 2
     elif label_mapping[label_key] == 'sidewalk':
-        return 4
+        return 3
     elif label_mapping[label_key] == 'soil':
-        return 5
+        return 4
     elif label_mapping[label_key] == 'high_grass':
-        return 6
+        return 5
     elif label_mapping[label_key] == 'low_grass':
-        return 7
+        return 6
     else:
-        return 8
+        return 7
 
 
 
@@ -339,6 +339,13 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
     return df
 
 # Modified main function to run classification with the new dataframe
+from collections import defaultdict
+
+# Dictionary to hold F1 and recall scores for each label per location
+f1_scores = defaultdict(list)
+recall_scores = defaultdict(list)
+
+
 def run_single_image_list_test_with_lbp_and_obstacle_classification(
         lidar_dir, labels_dir, csv_file, image_list, label_mapping, iterations=1, num_voxels=1000, k_neighbors=5,
         z_threshold=1, min_len=10, proportion_threshold=0.5):
@@ -346,7 +353,7 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     output_dir = f"classificationTest_{timestamp}_{os.path.basename(lidar_dir)}"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Save parameters as a text file
+    # Prepare initial parameters text
     params_text = f"""
     Classification Test Parameters:
 
@@ -365,11 +372,6 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     - Labels Directory: {labels_dir}
     - CSV Label Mapping File: {csv_file}
 
-    Target Classes:
-    - High Grass
-    - Low Grass
-    - Asphalt
-
     Image List:
     """ + "\n".join([f"- {img}" for img in image_list]) + f"""
 
@@ -377,13 +379,16 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     {label_mapping}
     """
 
-    # Saving parameters to a text file
-    params_file_path = os.path.join(output_dir, "classification_test_parameters.txt")
+    params_file_path = os.path.join(output_dir, "classification_test_parameters_and_metrics.txt")
     with open(params_file_path, "w") as file:
         file.write(params_text)
 
-    results = []
+    location_name = os.path.basename(lidar_dir)
+    if location_name not in location_accuracies:
+        location_accuracies[location_name] = []
 
+    # Proceed with the classification and recording accuracy, F1, recall as before
+    results = []
     for i in range(iterations):
         print(f"Running real data test iteration {i + 1}/{iterations}...")
         dfs = []
@@ -405,10 +410,28 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         y_pred = clf.predict(X_test)
 
         accuracy = accuracy_score(y_test, y_pred)
-        print(f"Iteration {i + 1}: Accuracy = {accuracy}")
-        print(f"Classification Report:\n {classification_report(y_test, y_pred)}")
-        conf_matrix = confusion_matrix(y_test, y_pred)
+        location_accuracies[location_name].append(accuracy)
 
+        # Capture F1 and recall scores per label
+        class_report = classification_report(y_test, y_pred, output_dict=True)
+        print(class_report)
+        metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
+
+        for label, metrics in class_report.items():
+            if label in {'accuracy', 'macro avg', 'weighted avg'}:
+                continue
+            f1_score = metrics['f1-score']
+            recall = metrics['recall']
+            metrics_text += f"Label {label}:\n  - F1 Score: {f1_score:.4f}\n  - Recall: {recall:.4f}\n\n"
+            f1_scores[location_name].append(f1_score)
+            recall_scores[location_name].append(recall)
+
+        # Append metrics to text file
+        with open(params_file_path, "a") as file:
+            file.write(metrics_text)
+
+        # Plot confusion matrix for each iteration
+        conf_matrix = confusion_matrix(y_test, y_pred)
         plt.figure(figsize=(10, 7))
         sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y_test),
                     yticklabels=np.unique(y_test))
@@ -419,16 +442,65 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         plt.savefig(plot_filename)
         plt.close()
 
+        # Append results to overall metrics
         results.append({
             'Iteration': i + 1,
             'Accuracy': accuracy,
-            'Classification Report': classification_report(y_test, y_pred, output_dict=True)
+            'Classification Report': class_report
         })
 
         combined_df.to_csv(os.path.join(output_dir, f'iteration_{i + 1}_real_data.csv'), index=False)
 
+    # Save final results as a summary CSV
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(output_dir, 'classification_real_data_results.csv'), index=False)
+
+
+def plot_f1_recall_by_label(f1_scores, recall_scores):
+    """
+    Plots F1 and Recall scores for each label across different datasets using specific category labels.
+
+    Parameters:
+    - f1_scores (dict): Dictionary with dataset names as keys and lists of F1 scores for each category.
+    - recall_scores (dict): Dictionary with dataset names as keys and lists of Recall scores for each category.
+    """
+
+    # Define specific category labels as mapped in `map_labels_to_categories`
+    category_labels = [
+        "Obstacle",  # Category 0
+        "Cobble",  # Category 1
+        "Gravel",  # Category 2
+        "Sidewalk",  # Category 3
+        "Soil",  # Category 4
+        "High Grass",  # Category 5
+        "Low Grass",  # Category 6
+        "Other"  # Category 7
+    ]
+
+    # Extract unique dataset locations for plotting
+    datasets = list(f1_scores.keys())
+
+    for dataset in datasets:
+        # Get the F1 and recall scores for each category in this dataset, filling missing data with zeros
+        f1_values = np.array(f1_scores[dataset] + [0] * (len(category_labels) - len(f1_scores[dataset])))
+        recall_values = np.array(recall_scores[dataset] + [0] * (len(category_labels) - len(recall_scores[dataset])))
+
+        # Plot F1 and recall scores
+        plt.figure(figsize=(12, 6))
+        bar_width = 0.35
+        index = np.arange(len(category_labels))
+
+        plt.bar(index, f1_values, bar_width, label='F1 Score', alpha=0.7)
+        plt.bar(index + bar_width, recall_values, bar_width, label='Recall', alpha=0.7)
+
+        plt.xlabel('Categories')
+        plt.ylabel('Score')
+        plt.title(f'F1 and Recall Scores for {dataset}')
+        plt.xticks(index + bar_width / 2, category_labels, rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
 
 
 if __name__ == "__main__":
@@ -478,18 +550,6 @@ if __name__ == "__main__":
         '2022-12-07_aying_hills__0012_1670420985739069345',
     ]
 
-    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, labels_dir, csv_file, image_list,
-    #                                                               label_mapping, iterations=1, num_voxels=1000,
-    #                                                                k_neighbors=5)
-
-    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
-    #                                                                label_mapping, iterations=1, num_voxels=1000,
-    #                                                                k_neighbors=5)
-
-    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
-    #                                                                label_mapping, iterations=1, num_voxels=1000,
-    #                                                               k_neighbors=5)
-
     lidar_dir4 = '../goose_3d_val/lidar/val/2022-09-21_garching_uebungsplatz_2'
     labels_dir4 = '../goose_3d_val/labels/val/2022-09-21_garching_uebungsplatz_2'
 
@@ -500,8 +560,98 @@ if __name__ == "__main__":
         '2022-09-21_garching_uebungsplatz_2__0003_1663755204459982406',
         '2022-09-21_garching_uebungsplatz_2__0004_1663755209017252315',
     ]
+
+    lidar_dir5 = '../goose_3d_val/lidar/val/2023-01-20_aying_mangfall_2'
+    labels_dir5 = '../goose_3d_val/labels/val/2023-01-20_aying_mangfall_2'
+
+    image_list5 = [
+        '2023-01-20_aying_mangfall_2__0402_1674223287010374431',
+        '2023-01-20_aying_mangfall_2__0403_1674223290055201300',
+        '2023-01-20_aying_mangfall_2__0404_1674223294780692415',
+        '2023-01-20_aying_mangfall_2__0405_1674223297089695576',
+        '2023-01-20_aying_mangfall_2__0406_1674223303390449467',
+    ]
+
+    lidar_dir6 = '../goose_3d_val/lidar/val/2023-03-03_garching_2'
+    labels_dir6 = '../goose_3d_val/labels/val/2023-03-03_garching_2'
+
+    image_list6 = [
+        '2023-03-03_garching_2__0114_1677850404544550420',
+        '2023-03-03_garching_2__0115_1677850409391907174',
+        '2023-03-03_garching_2__0116_1677850414554513656',
+        '2023-03-03_garching_2__0117_1677850415819237733',
+        '2023-03-03_garching_2__0118_1677850418032002589',
+    ]
+
+    lidar_dir7 = '../goose_3d_val/lidar/val/2023-05-15_neubiberg_rain'
+    labels_dir7 = '../goose_3d_val/labels/val/2023-05-15_neubiberg_rain'
+
+    image_list7 = [
+        '2023-05-15_neubiberg_rain__0623_1684157849628053530',
+        '2023-05-15_neubiberg_rain__0624_1684157852529822670',
+        '2023-05-15_neubiberg_rain__0625_1684157854913211132',
+        '2023-05-15_neubiberg_rain__0626_1684157858851042175',
+        '2023-05-15_neubiberg_rain__0627_1684157862063584296',
+    ]
+
+    lidar_dir8 = '../goose_3d_val/lidar/val/2023-05-17_neubiberg_sunny'
+    labels_dir8 = '../goose_3d_val/labels/val/2023-05-17_neubiberg_sunny'
+
+    image_list8 = [
+        '2023-05-17_neubiberg_sunny__0379_1684329742550906590',
+        '2023-05-17_neubiberg_sunny__0380_1684329745349077704',
+        '2023-05-17_neubiberg_sunny__0381_1684329746496937615',
+        '2023-05-17_neubiberg_sunny__0382_1684329747629654308',
+        '2023-05-17_neubiberg_sunny__0383_1684329748563080364',
+    ]
+
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, labels_dir, csv_file, image_list,
+                                                                  label_mapping, iterations=1, num_voxels=1000,
+                                                                    k_neighbors=5)
+
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
+                                                                    label_mapping, iterations=1, num_voxels=1000,
+                                                                    k_neighbors=5)
+
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
+                                                                    label_mapping, iterations=1, num_voxels=1000,
+                                                                    k_neighbors=5)
+
     run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir4, labels_dir4, csv_file, image_list4,
                                                                     label_mapping, iterations=1, num_voxels=1000, k_neighbors=5)
+
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir5, labels_dir5, csv_file, image_list5,
+                                                                    label_mapping, iterations=1, num_voxels=1000,
+                                                                    k_neighbors=5)
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir6, labels_dir6, csv_file, image_list6,
+                                                                    label_mapping, iterations=1, num_voxels=1000,
+                                                                    k_neighbors=5)
+
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir7, labels_dir7, csv_file, image_list7,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
+
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir8, labels_dir8, csv_file, image_list8,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
+
+    locations = list(location_accuracies.keys())
+    accuracies = list(location_accuracies.values())
+
+    plot_f1_recall_by_label(f1_scores, recall_scores)
+
+    average_accuracies = {location: np.mean(acc) for location, acc in location_accuracies.items()}
+
+    # Plotting the average accuracy per location
+    plt.figure(figsize=(12, 6))
+    plt.bar(locations, accuracies, color='skyblue')
+    plt.title('Average Classification Accuracy by LiDAR Directory Location')
+    plt.xlabel('LiDAR Directory')
+    plt.ylabel('Average Accuracy')
+    plt.xticks(rotation=45, ha='right')
+    plt.ylim(0, 1)
+    plt.tight_layout()
+    plt.show()
 
 
 
