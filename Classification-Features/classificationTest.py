@@ -1,3 +1,6 @@
+import time
+from cProfile import label
+
 from matplotlib import pyplot as plt
 import seaborn as sns
 from Voxelization import voxel3d as v3d
@@ -16,6 +19,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 location_accuracies = {}
+
+# Modified main function to run classification with the new dataframe
+from collections import defaultdict
+
+# Dictionary to hold F1 and recall scores for each label per location
+f1_scores = defaultdict(list)
+recall_scores = defaultdict(list)
 
 
 # Function to apply LBP on a voxelized point cloud
@@ -79,8 +89,10 @@ def map_labels_to_categories(label_mapping, label_key):
         return 5
     elif label_mapping[label_key] == 'low_grass':
         return 6
-    else:
+    elif label_mapping[label_key] == 'snow':
         return 7
+    else:
+        return 8
 
 
 
@@ -230,6 +242,7 @@ def create_cost_map_with_predictions(voxel_df, predictions, voxel_size=5, passab
     plt.ylabel("Y Coordinate")
     plt.show()
 
+
 def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar_dir, labels_dir, csv_file,
                                                                    label_mapping, z_threshold=1, voxel_size=5,
                                                                    num_voxels=100000, k_neighbors=6,
@@ -249,8 +262,8 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
     # Lists to hold computed features
     all_voxel_rmse, num_points_list, density_list, lbp_list, majority_labels, class_categories = [], [], [], [], [], []
     convex_hull_volumes, densities, pca_var_pc1, pca_var_pc2, pca_var_pc3, flatnesses, elongations, roughnesses, \
-    height_variabilities, skewnesses, curvatures, mean_nn_distances, mean_intensities, std_intensities, \
-    skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
+        height_variabilities, skewnesses, curvatures, mean_nn_distances, mean_intensities, std_intensities, \
+        skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
 
     voxel_volume = voxel_size ** 3
 
@@ -338,13 +351,6 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
     df = pd.DataFrame(data)
     return df
 
-# Modified main function to run classification with the new dataframe
-from collections import defaultdict
-
-# Dictionary to hold F1 and recall scores for each label per location
-f1_scores = defaultdict(list)
-recall_scores = defaultdict(list)
-
 
 def run_single_image_list_test_with_lbp_and_obstacle_classification(
         lidar_dir, labels_dir, csv_file, image_list, label_mapping, iterations=1, num_voxels=1000, k_neighbors=5,
@@ -355,49 +361,60 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
 
     # Prepare initial parameters text
     params_text = f"""
-    Classification Test Parameters:
+        Classification Test Parameters:
 
-    1. Voxel Size: 5
-    2. Passable Cost: 1
-    3. Non-Passable Cost: 100
-    4. Number of Iterations: {iterations}
-    5. Number of Voxels: {num_voxels}
-    6. K Neighbors (for LBP): {k_neighbors}
-    7. Z Threshold: {z_threshold}
-    8. Minimum Points per Voxel (min_len): {min_len}
-    9. Majority Proportion Threshold: {proportion_threshold}
+        1. Voxel Size: 5
+        2. Passable Cost: 1
+        3. Non-Passable Cost: 100
+        4. Number of Iterations: {iterations}
+        5. Number of Voxels: {num_voxels}
+        6. K Neighbors (for LBP): {k_neighbors}
+        7. Z Threshold: {z_threshold}
+        8. Minimum Points per Voxel (min_len): {min_len}
+        9. Majority Proportion Threshold: {proportion_threshold}
 
-    Directories and Data Files:
-    - LiDAR Directory: {lidar_dir}
-    - Labels Directory: {labels_dir}
-    - CSV Label Mapping File: {csv_file}
+        Directories and Data Files:
+        - LiDAR Directory: {lidar_dir}
+        - Labels Directory: {labels_dir}
+        - CSV Label Mapping File: {csv_file}
 
-    Image List:
-    """ + "\n".join([f"- {img}" for img in image_list]) + f"""
+        Image List:
+        """ + "\n".join([f"- {img}" for img in image_list]) + f"""
 
-    Label Mapping:
-    {label_mapping}
-    """
+        Label Mapping:
+        {label_mapping}
+        """
 
     params_file_path = os.path.join(output_dir, "classification_test_parameters_and_metrics.txt")
     with open(params_file_path, "w") as file:
         file.write(params_text)
+    os.makedirs(output_dir, exist_ok=True)
+
 
     location_name = os.path.basename(lidar_dir)
     if location_name not in location_accuracies:
         location_accuracies[location_name] = []
 
-    # Proceed with the classification and recording accuracy, F1, recall as before
+    # Proceed with the classification and record timing
     results = []
     for i in range(iterations):
         print(f"Running real data test iteration {i + 1}/{iterations}...")
         dfs = []
 
         for prefix in image_list:
+            # Start timing for this image processing
+            start_time = time.time()
+
             df = process_image_with_metrics_and_lbp_and_obstacle_classification(
                 prefix, lidar_dir, labels_dir, csv_file, label_mapping, z_threshold=z_threshold,
                 voxel_size=5, num_voxels=num_voxels, k_neighbors=k_neighbors, min_len=min_len,
                 proportion_threshold=proportion_threshold)
+
+            # End timing for this image processing
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Time taken for image {prefix}: {elapsed_time:.4f} seconds")
+
             dfs.append(df)
 
         combined_df = pd.concat(dfs, ignore_index=True)
@@ -407,12 +424,19 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
 
         clf = RandomForestClassifier(n_estimators=100)
         clf.fit(X_train, y_train)
+        prediction_start_time = time.time()
+
         y_pred = clf.predict(X_test)
+
+        # End timing for prediction
+        prediction_end_time = time.time()
+        prediction_elapsed_time = prediction_end_time - prediction_start_time
+        print(f"Time taken for Random Forest prediction: {prediction_elapsed_time:.4f} seconds")
 
         accuracy = accuracy_score(y_test, y_pred)
         location_accuracies[location_name].append(accuracy)
 
-        # Capture F1 and recall scores per label
+        # Capture and print classification metrics as usual
         class_report = classification_report(y_test, y_pred, output_dict=True)
         print(class_report)
         metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
@@ -438,7 +462,8 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         plt.title(f'Confusion Matrix - Iteration {i + 1}')
         plt.xlabel('Predicted Label')
         plt.ylabel('True Label')
-        plot_filename = os.path.join(output_dir, f'confusion_matrix_{i + 1}.png')
+        sanitized_lidar_dir = lidar_dir.replace('/', '_').replace('..', '_')
+        plot_filename = os.path.join(output_dir, f'confusion_matrix_{i + 1}_{sanitized_lidar_dir}.png')
         plt.savefig(plot_filename)
         plt.close()
 
@@ -609,23 +634,23 @@ if __name__ == "__main__":
                                                                   label_mapping, iterations=1, num_voxels=1000,
                                                                     k_neighbors=5)
 
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
-                                                                    label_mapping, iterations=1, num_voxels=1000,
-                                                                    k_neighbors=5)
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
 
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
-                                                                    label_mapping, iterations=1, num_voxels=1000,
-                                                                    k_neighbors=5)
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
 
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir4, labels_dir4, csv_file, image_list4,
-                                                                    label_mapping, iterations=1, num_voxels=1000, k_neighbors=5)
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir4, labels_dir4, csv_file, image_list4,
+    #                                                                label_mapping, iterations=1, num_voxels=1000, k_neighbors=5)
 
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir5, labels_dir5, csv_file, image_list5,
-                                                                    label_mapping, iterations=1, num_voxels=1000,
-                                                                    k_neighbors=5)
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir6, labels_dir6, csv_file, image_list6,
-                                                                    label_mapping, iterations=1, num_voxels=1000,
-                                                                    k_neighbors=5)
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir5, labels_dir5, csv_file, image_list5,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir6, labels_dir6, csv_file, image_list6,
+    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #                                                                k_neighbors=5)
 
     #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir7, labels_dir7, csv_file, image_list7,
     #                                                                label_mapping, iterations=1, num_voxels=1000,
@@ -639,19 +664,6 @@ if __name__ == "__main__":
     accuracies = list(location_accuracies.values())
 
     plot_f1_recall_by_label(f1_scores, recall_scores)
-
-    average_accuracies = {location: np.mean(acc) for location, acc in location_accuracies.items()}
-
-    # Plotting the average accuracy per location
-    plt.figure(figsize=(12, 6))
-    plt.bar(locations, accuracies, color='skyblue')
-    plt.title('Average Classification Accuracy by LiDAR Directory Location')
-    plt.xlabel('LiDAR Directory')
-    plt.ylabel('Average Accuracy')
-    plt.xticks(rotation=45, ha='right')
-    plt.ylim(0, 1)
-    plt.tight_layout()
-    plt.show()
 
 
 
