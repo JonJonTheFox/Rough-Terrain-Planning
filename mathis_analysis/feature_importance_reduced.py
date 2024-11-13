@@ -132,7 +132,7 @@ def reduce_features(voxel_df):
 def train_and_evaluate(reduced_voxel_df, output_dir):
     """Train the Random Forest model on the reduced dataset, evaluate it, and plot confusion matrix with seaborn heatmap."""
     # Sample down the dataset to 20% of its original size for faster computation
-    sampled_df = reduced_voxel_df.sample(frac=0.20, random_state=42)
+    sampled_df = reduced_voxel_df.sample(frac=1.0, random_state=42)
 
     # Prepare data
     X = sampled_df.drop(columns=["target", "dominant_label"])
