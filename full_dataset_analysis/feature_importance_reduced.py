@@ -16,6 +16,10 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from sklearn.tree import export_graphviz
+#import graphviz
+from sklearn.model_selection import learning_curve
+import numpy as np
 
 def load_data(pickle_file):
     """Load data from a pickle file."""
@@ -45,65 +49,36 @@ def prepare_data(full_voxel_df):
 def map_labels_to_categories(label_mapping, label_key):
     """Map label keys to category indices."""
     obstacle_labels = {
-        "animal",
-        "barrel",
-        "barrier_tape",
-        "bicycle",
-        "boom_barrier",
-        "bridge",
-        "building",
-        "bus",
-        "car",
-        "caravan",
-        "container",
-        "debris",
-        "fence",
-        "guard_rail",
-        "heavy_machinery",
+        "forest",
         "hedge",
-        "kick_scooter",
-        "misc_sign",
-        "motorcycle",
-        "obstacle",
-        "person",
-        "pole",
-        "rail_track",
-        "rider",
-        "road_block",
-        "rock",
-        "scenery_vegetation",
-        "street_light",
-        "traffic_cone",
-        "traffic_light",
-        "traffic_sign",
-        "trailer",
+        "building",
         "tree_crown",
-        "tree_root",
-        "tree_trunk",
-        "truck",
-        "tunnel",
+        "bush",
+        "obstacle",
+        "fence",
+        "crops",
+        "ego_vehicle",
         "wall",
-        "wire",
+        "debris",
+        "bridge",
+        "leaves",
+        
     }
-    passable_labels = {"asphalt", "cobble", "gravel", "sidewalk", "soil", "low_grass"}
     if label_key not in label_mapping:
-        return 8
+        return 6
     if label_mapping[label_key] in obstacle_labels:
         return 0
-    elif label_mapping[label_key] == "cobble":
+    elif label_mapping[label_key] in {"sidewalk", "curb", "cobble", "gravel", "soil", "asphalt"}:
         return 1
-    elif label_mapping[label_key] == "gravel":
-        return 2
-    elif label_mapping[label_key] == "sidewalk":
-        return 3
-    elif label_mapping[label_key] == "soil":
-        return 4
-    elif label_mapping[label_key] == "high_grass":
-        return 5
     elif label_mapping[label_key] == "low_grass":
-        return 6
+        return 2
+    elif label_mapping[label_key] == "high_grass":
+        return 3
+    elif label_mapping[label_key] == "snow":
+        return 4
     else:
-        return 7
+        #print(f"Unknown label: {label_key}")
+        return 5
 
 def map_labels(voxel_df):
     """Map labels in the dataframe to categories."""
@@ -178,14 +153,12 @@ def train_and_evaluate(reduced_voxel_df, output_dir):
 
     category_labels = {
         0: 'Obstacle',
-        1: 'Cobble',
-        2: 'Gravel',
-        3: 'Sidewalk',
-        4: 'Soil',
-        5: 'High Grass',
-        6: 'Low Grass',
-        7: 'Other',
-        8: 'Unknown',
+        1: 'Flat Surface',
+        2: 'Low Grass',
+        3: 'High Grass',
+        4: 'Snow',
+        5: 'Other',
+        6: 'Not Labelled'
     }
 
     labels_names = [category_labels[label] for label in labels]
@@ -219,6 +192,78 @@ def train_and_evaluate(reduced_voxel_df, output_dir):
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "feature_importances.png"))
     plt.close()
+    
+    f1_per_class = f1_score(y_test, y_pred, average=None)
+    recall_per_class = recall_score(y_test, y_pred, average=None)
+    
+    # Create positions for the bars
+    x = np.arange(len(labels))
+    width = 0.35
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(x - width/2, f1_per_class, width, label='F1 Score', color='skyblue')
+    ax.bar(x + width/2, recall_per_class, width, label='Recall', color='lightcoral')
+    
+    ax.set_ylabel('Score')
+    ax.set_title('F1 and Recall Scores by Class')
+    ax.set_xticks(x)
+    ax.set_xticklabels([category_labels[label] for label in labels], rotation=45, ha='right')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "f1_recall_scores.png"))
+    plt.close()
+
+    # 2. Plot Learning Curve
+    train_sizes = [0.001, 0.01, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0]
+    train_sizes, train_scores, val_scores = learning_curve(
+        forest_clf, X, y,
+        train_sizes=train_sizes,
+        cv=3,
+        n_jobs=-1,
+        scoring='f1_weighted'
+    )
+
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    val_mean = np.mean(val_scores, axis=1)
+    val_std = np.std(val_scores, axis=1)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(train_sizes, train_mean, label='Training score', color='blue')
+    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1, color='blue')
+    plt.plot(train_sizes, val_mean, label='Cross-validation score', color='red')
+    plt.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.1, color='red')
+
+    plt.xlabel('Training Examples')
+    plt.ylabel('F1 Score')
+    plt.title('Learning Curve')
+    plt.legend(loc='lower right')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "learning_curve.png"))
+    plt.close()
+    # TODO : Discuss if we want to keep this (need some debugging)
+    '''
+    # 3. Visualize a single tree from the forest
+    # Get a tree from the forest
+    estimator = forest_clf.estimators_[0]
+    
+    # Export the tree to a dot file
+    dot_data = export_graphviz(
+        estimator,
+        out_file=None,
+        feature_names=X.columns,
+        class_names=[category_labels[i] for i in sorted(category_labels.keys())],
+        filled=True,
+        rounded=True,
+        special_characters=True,
+        max_depth=3  # Limit depth for visibility
+    )
+    
+    # Create and save the tree visualization
+    graph = graphviz.Source(dot_data)
+    graph.render(os.path.join(output_dir, "decision_tree"), format="png", cleanup=True)
+    '''
 
 def main():
     """Main function to execute the data processing and model training."""
