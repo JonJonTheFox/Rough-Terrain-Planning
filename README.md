@@ -1,7 +1,7 @@
 
 # LiDAR Point Cloud Classificacation Using Light Weight ML Algorithms on GOOSE dataset
 
-This project was built by Mathis Gaultier Doutre, Antoine Revel, and
+This project was built by Mathis Doutre, Antoine Revel, and
 Yehonatan Mileguir. Please have the GOOSE goose_3d dataset downloaded to use the scripts in this repository. 
 
 
