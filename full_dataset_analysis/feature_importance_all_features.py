@@ -129,28 +129,29 @@ def map_labels(voxel_df):
     )
     return voxel_df
 
-
 def plot_category_distribution(voxel_df, output_dir):
-    """Plot and save the distribution of categories."""
+    """Plot and save the distribution of categories with labels."""
     category_distribution = voxel_df["target"].value_counts().sort_index()
     print(category_distribution)
     plt.figure(figsize=(8, 6))
-    plt.bar(category_distribution.index, category_distribution.values)
+    bars = plt.bar(category_distribution.index, category_distribution.values)
     plt.xlabel("Category")
     plt.ylabel("Count")
     plt.title("Distribution of Categories in Voxel Data")
+
+    # Add labels on top of each bar
+    for bar in bars:
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            str(bar.get_height()),
+            ha="center",
+            va="bottom",
+        )
+
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "category_distribution.png"))
     plt.close()
-
-
-def train_random_forest(X_train, y_train):
-    """Train a Random Forest classifier."""
-    forest_clf = RandomForestClassifier(
-        n_estimators=100, random_state=42, n_jobs=-1
-    )
-    forest_clf.fit(X_train, y_train)
-    return forest_clf
 
 
 def evaluate_model(model, X_test, y_test, output_dir, feature_names, prefix=""):
@@ -179,14 +180,25 @@ def evaluate_model(model, X_test, y_test, output_dir, feature_names, prefix=""):
     report_df = pd.DataFrame(report_dict).transpose()
     category_metrics = report_df.iloc[:-3][["f1-score", "recall"]]
 
-    # Plot F1 scores and recall
+    # Plot F1 scores and recall with labels
     fig, ax = plt.subplots(figsize=(10, 6))
-    category_metrics.plot(kind="bar", ax=ax, color=["skyblue", "orange"])
+    bars = category_metrics.plot(kind="bar", ax=ax, color=["skyblue", "orange"])
     ax.set_title(f"{prefix}F1 Scores and Recall by Category")
     ax.set_xlabel("Category")
     ax.set_ylabel("Score")
     ax.legend(["F1 Score", "Recall"])
     plt.xticks(rotation=45)
+
+    # Add labels to bars
+    for container in ax.containers:
+        for bar in container:
+            ax.annotate(
+                f"{bar.get_height():.2f}",
+                (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                ha="center",
+                va="bottom",
+            )
+
     plt.tight_layout()
     plt.savefig(
         os.path.join(
@@ -195,7 +207,7 @@ def evaluate_model(model, X_test, y_test, output_dir, feature_names, prefix=""):
     )
     plt.close()
 
-    # Feature importance
+    # Feature importance with labels
     feature_importances = pd.Series(model.feature_importances_, index=feature_names)
     feature_importances.nlargest(100).plot(
         kind="barh", title=f"{prefix}Top Feature Importances", figsize=(10, 8)
@@ -206,7 +218,7 @@ def evaluate_model(model, X_test, y_test, output_dir, feature_names, prefix=""):
     )
     plt.close()
 
-    # Permutation importance
+    # Permutation importance with labels
     perm_importance = permutation_importance(
         model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=-1
     )
@@ -216,18 +228,25 @@ def evaluate_model(model, X_test, y_test, output_dir, feature_names, prefix=""):
             "Importance": perm_importance.importances_mean,
         }
     ).sort_values(by="Importance", ascending=False)
-    plt.figure(figsize=(10, 8))
-    perm_importance_df.head(20).plot(
-        kind="barh", x="Feature", y="Importance", legend=False
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    bars = perm_importance_df.head(20).plot(
+        kind="barh", x="Feature", y="Importance", legend=False, ax=ax
     )
-    plt.title(f"{prefix}Top 20 Feature Importances (Permutation Importance)")
-    plt.xlabel("Mean Decrease in Accuracy")
-    plt.gca().invert_yaxis()
+    ax.set_title(f"{prefix}Top 20 Feature Importances (Permutation Importance)")
+    ax.set_xlabel("Mean Decrease in Accuracy")
+    ax.invert_yaxis()
+
+    # Add labels to bars
+    for i, v in enumerate(perm_importance_df["Importance"].head(20)):
+        ax.text(v, i, f"{v:.4f}", va="center")
+
     plt.tight_layout()
     plt.savefig(
         os.path.join(output_dir, f"{prefix.lower()}permutation_importance.png")
     )
     plt.close()
+
 
 
 def main():

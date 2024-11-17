@@ -57,6 +57,7 @@ class VoxelGrid:
                 if proportion < minimum_majority_proportion:
                     self.remove_voxel(voxel_key)
                     continue
+        
                         
                     
     def remove_voxel(self, voxel_key) -> None:
@@ -144,6 +145,56 @@ class VoxelGrid:
                 stats['voxel_label_counts'][voxel_key][label] += 1
         
         return stats
+    
+    def get_selected_features_statistics(self) -> Dict:
+        """Calculate selected voxel features required for the neural network."""
+        stats = {
+            'total_voxels': len(self.voxel_dict),
+            'points_per_voxel': {},
+            'label_distribution': defaultdict(int),
+            'voxel_label_counts': defaultdict(lambda: defaultdict(int)),
+            'avg_intensity': {},
+            'elevation_range': {},
+            'plane_coef_3': {},
+            'RMSE': {},
+            'flatness': {},
+            'elongation': {},
+            'dominant_label': {},
+            'dominant_proportion': {}
+        }
+
+        for voxel_key, points in self.voxel_dict.items():
+            point_count = len(points)
+            stats['points_per_voxel'][point_count] = stats['points_per_voxel'].get(point_count, 0) + 1
+
+            points_3d = np.array(points)[:, :3]
+            try:
+                if len(points) < 3:
+                    stats['RMSE'][voxel_key] = None
+                    stats['plane_coef_3'][voxel_key] = None
+                else:
+                    plane_coefficients, rmse = vu.fit_plane_least_squares(points_3d)
+                    stats['RMSE'][voxel_key] = rmse
+                    stats['plane_coef_3'][voxel_key] = plane_coefficients[2]  # Extracting the 3rd coefficient
+            except ValueError as e:
+                logging.warning(f"Voxel {voxel_key}: {e}")
+                stats['RMSE'][voxel_key] = None
+                stats['plane_coef_3'][voxel_key] = None
+
+            stats['elevation_range'][voxel_key] = vu.calculate_elevation_range(points_3d)
+            stats['avg_intensity'][voxel_key] = np.mean(np.array(points)[:, 3])
+            variance_ratios, flatness, elongation = vu.compute_pca_metrics(points_3d)
+            stats['flatness'][voxel_key] = flatness
+            stats['elongation'][voxel_key] = elongation
+
+            # Label statistics
+            labels = self.voxel_labels[voxel_key]
+            for label in labels:
+                stats['label_distribution'][label] += 1
+                stats['voxel_label_counts'][voxel_key][label] += 1
+
+        return stats
+
 
     def get_voxel_centers(self) -> np.ndarray:
         """Return the center coordinates of all voxels."""
