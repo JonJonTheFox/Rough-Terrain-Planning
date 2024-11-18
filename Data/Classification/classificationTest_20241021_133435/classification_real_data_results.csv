@@ -1,0 +1,2 @@
+Iteration,Accuracy,Classification Report
+1,0.9665653495440729,"{'50': {'precision': 0.9665653495440729, 'recall': 1.0, 'f1-score': 0.9829984544049459, 'support': 318.0}, '51': {'precision': 0.0, 'recall': 0.0, 'f1-score': 0.0, 'support': 11.0}, 'accuracy': 0.9665653495440729, 'macro avg': {'precision': 0.48328267477203646, 'recall': 0.5, 'f1-score': 0.49149922720247297, 'support': 329.0}, 'weighted avg': {'precision': 0.9342485749392558, 'recall': 0.9665653495440729, 'f1-score': 0.9501322446832001, 'support': 329.0}}"

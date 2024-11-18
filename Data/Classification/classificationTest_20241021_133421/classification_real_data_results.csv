@@ -1,0 +1,2 @@
+Iteration,Accuracy,Classification Report
+1,1.0,"{'50': {'precision': 1.0, 'recall': 1.0, 'f1-score': 1.0, 'support': 324.0}, 'accuracy': 1.0, 'macro avg': {'precision': 1.0, 'recall': 1.0, 'f1-score': 1.0, 'support': 324.0}, 'weighted avg': {'precision': 1.0, 'recall': 1.0, 'f1-score': 1.0, 'support': 324.0}}"
