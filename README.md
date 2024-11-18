@@ -34,4 +34,4 @@ LBP.py: LBP Helper function to create LBP feature which can help the model diffe
 
 ClassificationTest.py: Script which runs the preprocessing of the data for multiple images for multiple datasets and runs the RandomForrest Classifier. Can be used for testing the model on specific images and datasets. 
 
-modelComparison.py: Unfinished script mean for the testing the inference time of 3D DL semgentation models and our model. 
+modelComparison.py: Unfinished script meant for the testing the inference time of 3D DL semgentation models and our model. 
