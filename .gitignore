@@ -1,4 +1,4 @@
-# Mathis's custom .gitignore
+.idea/
 .DS_Store
 __pycache__/
 *.py[cod]
