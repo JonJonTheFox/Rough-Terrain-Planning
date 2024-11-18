@@ -4,13 +4,33 @@ This project was developed by Mathis Doutre, Antoine Revel, and Yehonatan Milegu
 
 For more information, visit [GOOSE Dataset](https://goose-dataset.de/).
 
-## Installation
+## Creating a Virtual Environment
 
-Install dependencies with:
+To set up a virtual environment using Conda and Python 3.8.X or higher, follow these steps:
 
-```bash
-  pip install -r requirements.txt
-```
+1. **Create the Conda Environment**  
+   Replace `<env_name>` with your preferred environment name.
+
+   ```bash
+   conda create --name <env_name> python=3.10
+   ```
+
+2. **Activate the Environment**  
+
+   ```bash
+   conda activate <env_name>
+   ```
+
+3. **Install Dependencies**  
+
+   With the environment activated, install the required dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+Now your environment is ready for running the scripts in this repository.
+
 
 ## Scripts
 
