@@ -31,7 +31,7 @@ def resolve_dataset_path(short_name):
     return DATASET_MAP[short_name]
 
 def load_label_metadata():
-    csv_file = os.path.join(DATA_DIR, 'data/goose_3d_val/goose_label_mapping.csv')
+    csv_file = os.path.join(DATA_DIR, 'data/goose_3d_val/goose_label_mapping.csv') # Change this path if needed
     try:
         label_metadata = pd.read_csv(csv_file)
         logging.info("Label metadata loaded successfully")
