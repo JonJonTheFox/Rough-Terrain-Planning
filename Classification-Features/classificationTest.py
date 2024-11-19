@@ -203,67 +203,66 @@ def compute_intensity_features(point_cloud):
 # Combined function to compute all properties for a given point cloud
 # Other imports and functions remain unchanged
 
-def create_cost_map_with_predictions(voxel_df, predictions, voxel_size=5, passable_cost=1, non_passable_cost=100):
+def create_cost_map_with_predictions(voxel_map, predictions, unique_voxel_labels):
     """
-    Creates and visualizes a 2D cost map based on predicted passability values.
+    Creates and visualizes a 2D cost map based on predicted passability values using the voxel map.
 
     Parameters:
-    - voxel_df (pd.DataFrame): DataFrame containing voxel data with 'X', 'Y' coordinates.
-    - predictions (np.array or pd.Series): Array of predicted categories (1 for passable, 0 for non-passable).
-    - voxel_size (int): Size of each voxel in units. Default is 5.
-    - passable_cost (int): Cost value assigned to passable regions. Default is 1.
-    - non_passable_cost (int): Cost value assigned to non-passable regions. Default is 100.
+    - voxel_map (dict): Map of voxel label to voxel center (X, Y).
+    - unique_voxel_labels (np.ndarray): Array of unique voxel labels.
+    - predictions (np.ndarray): Array of predicted categories (1 for passable, 0 for non-passable).
     """
-    # Extract and scale voxel coordinates
-    x_coords = (voxel_df['X'] / voxel_size).astype(int)
-    y_coords = (voxel_df['Y'] / voxel_size).astype(int)
+    # Ensure we filter `unique_voxel_labels` to include only those with predictions
+    if len(predictions) < len(unique_voxel_labels):
+        unique_voxel_labels = unique_voxel_labels[:len(predictions)]
+    elif len(predictions) > len(unique_voxel_labels):
+        predictions = predictions[:len(unique_voxel_labels)]
 
-    # Define grid size based on coordinate extents
-    x_min, x_max = x_coords.min(), x_coords.max()
-    y_min, y_max = y_coords.min(), y_coords.max()
-    grid_shape = (x_max - x_min + 1, y_max - y_min + 1)
+    # Extract voxel centers
+    voxel_centers = np.array([voxel_map[label] for label in unique_voxel_labels])
+    x_coords = voxel_centers[:, 0]
+    y_coords = voxel_centers[:, 1]
 
-    # Initialize cost map with non-passable cost
-    cost_map = np.ones(grid_shape) * non_passable_cost
+    # Create scatter plot
+    plt.figure(figsize=(12, 10))
+    scatter = plt.scatter(x_coords, y_coords, c=predictions, cmap='YlGnBu', s=50, edgecolors='k', alpha=0.7)
 
-    # Populate the cost map based on predictions
-    for x, y, prediction in zip(x_coords, y_coords, predictions):
-        if prediction == 1:  # Predicted passable
-            cost_map[x - x_min, y - y_min] = passable_cost
-        else:  # Predicted non-passable
-            cost_map[x - x_min, y - y_min] = non_passable_cost
-
-    # Plot the cost map
-    plt.figure(figsize=(10, 10))
-    plt.imshow(cost_map.T, cmap='YlGnBu', origin='lower', extent=[x_min, x_max, y_min, y_max])
-    plt.colorbar(label="Cost")
+    # Add colorbar and labels
+    plt.colorbar(scatter, label="Predicted Cost")
     plt.title("Predicted Passability Cost Map")
     plt.xlabel("X Coordinate")
     plt.ylabel("Y Coordinate")
+    plt.axis("equal")
+    plt.grid(True, linestyle='--', alpha=0.5)
     plt.show()
 
 
+
+
+
+
 def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar_dir, labels_dir, csv_file,
-                                                                   label_mapping, z_threshold=1, voxel_size=5,
+                                                                   label_mapping, z_threshold=100, voxel_size=5,
                                                                    num_voxels=100000, k_neighbors=6,
-                                                                   min_len=10, proportion_threshold=0.5):
+                                                                   min_len=0, proportion_threshold=0.0):
     # Load point cloud and labels
     lidar_data, labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
     pointcloud, labels = pf.apply_threshold(lidar_data, labels, z_threshold)
-    voxel_labels_, voxel_map_, unique_voxel_labels_ = v3d.voxelize_point_cloud_2d(pointcloud, voxel_size=voxel_size)
 
-    voxel_to_points = {voxel_label: [] for voxel_label in unique_voxel_labels_}
-    total_points = len(pointcloud)
+    # Voxelize the point cloud
+    voxel_labels, voxel_map, unique_voxel_labels = v3d.voxelize_point_cloud_2d(pointcloud, voxel_size=voxel_size)
+
     retained_points = 0
-
-    for idx, voxel_label in enumerate(voxel_labels_):
+    # Initialize mappings
+    voxel_to_points = {voxel_label: [] for voxel_label in unique_voxel_labels}
+    for idx, voxel_label in enumerate(voxel_labels):
         voxel_to_points[voxel_label].append(idx)
 
     # Lists to hold computed features
     all_voxel_rmse, num_points_list, density_list, lbp_list, majority_labels, class_categories = [], [], [], [], [], []
-    convex_hull_volumes, densities, pca_var_pc1, pca_var_pc2, pca_var_pc3, flatnesses, elongations, roughnesses, \
-        height_variabilities, skewnesses, curvatures, mean_nn_distances, mean_intensities, std_intensities, \
-        skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
+    densities, pca_var_pc1, pca_var_pc2, pca_var_pc3, flatnesses, elongations, \
+        height_variabilities, skewnesses, mean_nn_distances, mean_intensities, std_intensities, \
+        skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [],
 
     voxel_volume = voxel_size ** 3
 
@@ -281,9 +280,10 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
         if majority_proportion < proportion_threshold:
             continue
 
+        # Calculate features
         retained_points += len(points_in_voxel)
-        voxel_planes_, rmse_ = pf.compute_voxel_planes(points_in_voxel, np.array([voxel_label] * len(points_in_voxel)))
-        lbp_patterns = apply_dynamic_lbp_to_voxels(points_in_voxel, labels_in_voxel, voxel_labels_[point_indices],
+        voxel_planes_, rmse_ = pf.compute_voxel_planes(points_in_voxel, np.array([voxel_label] * len(points_in_voxel)))  # Example RMSE computation
+        lbp_patterns = apply_dynamic_lbp_to_voxels(points_in_voxel, labels_in_voxel, voxel_labels[point_indices],
                                                    k_neighbors=k_neighbors)
 
         if voxel_label not in rmse_:
@@ -291,41 +291,34 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
 
         rmse_value = rmse_[voxel_label]
         all_voxel_rmse.append(rmse_value)
-        num_points = len(points_in_voxel)
-        num_points_list.append(num_points)
-        density_list.append(num_points / voxel_volume)
+        num_points_list.append(retained_points)
+        density_list.append(retained_points / voxel_volume)
         majority_labels.append(majority_label)
         lbp_value = lbp_patterns.get(voxel_label, 0)
         lbp_list.append(lbp_value)
         class_categories.append(map_labels_to_categories(label_mapping, majority_label))
 
-        # Calculate additional features for each voxel
-        convex_hull_volumes.append(compute_convex_hull_volume(points_in_voxel))
+        # Additional features
+        #convex_hull_volumes.append(compute_convex_hull_volume(points_in_voxel))
         densities.append(compute_density(points_in_voxel))
         variance_ratios, flatness, elongation = compute_pca(points_in_voxel)
-        # Split PCA variance ratios into separate components
         pca_var_pc1.append(variance_ratios[0])
         pca_var_pc2.append(variance_ratios[1])
         pca_var_pc3.append(variance_ratios[2])
         flatnesses.append(flatness)
         elongations.append(elongation)
-        roughnesses.append(compute_surface_roughness(points_in_voxel))
+        #roughnesses.append(compute_surface_roughness(points_in_voxel))
         height_var, skewness = compute_height_variability(points_in_voxel)
         height_variabilities.append(height_var)
-        skewnesses.append(skewness)
-        curvatures.append(compute_curvature(points_in_voxel))
+        #skewnesses.append(skewness)
+        #curvatures.append(compute_curvature(points_in_voxel))
         mean_nn_distances.append(compute_mean_nearest_neighbor_distance(points_in_voxel))
         mean_intensity, std_intensity, skew_intensity = compute_intensity_features(points_in_voxel)
         mean_intensities.append(mean_intensity)
         std_intensities.append(std_intensity)
-        skew_intensities.append(skew_intensity)
+        #skew_intensities.append(skew_intensity)
 
-    retention_percentage = (retained_points / total_points) * 100
-    print(f"Total initial points: {total_points}")
-    print(f"Points retained after filtering: {retained_points}")
-    print(f"Percentage of data retained after filtering: {retention_percentage:.2f}%")
-
-    # Create dataframe with all features
+    # Create DataFrame
     data = {
         'RMSE': all_voxel_rmse,
         'Num_Points': num_points_list,
@@ -333,28 +326,29 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
         'LBP': lbp_list,
         'Class': majority_labels,
         'Category': class_categories,
-        'ConvexHullVolume': convex_hull_volumes,
+        #'ConvexHullVolume': convex_hull_volumes,
         'PCA_Var_PC1': pca_var_pc1,
         'PCA_Var_PC2': pca_var_pc2,
         'PCA_Var_PC3': pca_var_pc3,
         'Flatness': flatnesses,
         'Elongation': elongations,
-        'SurfaceRoughness': roughnesses,
+        #'SurfaceRoughness': roughnesses,
         'HeightVariability': height_variabilities,
-        'HeightSkewness': skewnesses,
-        'Curvature': curvatures,
+        #'HeightSkewness': skewnesses,
+        #'Curvature': curvatures,
         'MeanNN_Distance': mean_nn_distances,
         'MeanIntensity': mean_intensities,
         'StdIntensity': std_intensities,
-        'SkewIntensity': skew_intensities
+        #'SkewIntensity': skew_intensities
     }
     df = pd.DataFrame(data)
-    return df
+
+    return df, voxel_map, unique_voxel_labels
 
 
 def run_single_image_list_test_with_lbp_and_obstacle_classification(
         lidar_dir, labels_dir, csv_file, image_list, label_mapping, iterations=1, num_voxels=1000, k_neighbors=5,
-        z_threshold=1, min_len=10, proportion_threshold=0.5):
+        z_threshold=100, min_len=0, proportion_threshold=0.0, voxel_size=5):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_dir = f"classificationTest_{timestamp}_{os.path.basename(lidar_dir)}"
     os.makedirs(output_dir, exist_ok=True)
@@ -363,7 +357,7 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     params_text = f"""
         Classification Test Parameters:
 
-        1. Voxel Size: 5
+        1. Voxel Size: {voxel_size}
         2. Passable Cost: 1
         3. Non-Passable Cost: 100
         4. Number of Iterations: {iterations}
@@ -388,8 +382,6 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     params_file_path = os.path.join(output_dir, "classification_test_parameters_and_metrics.txt")
     with open(params_file_path, "w") as file:
         file.write(params_text)
-    os.makedirs(output_dir, exist_ok=True)
-
 
     location_name = os.path.basename(lidar_dir)
     if location_name not in location_accuracies:
@@ -400,44 +392,58 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     for i in range(iterations):
         print(f"Running real data test iteration {i + 1}/{iterations}...")
         dfs = []
+        voxel_maps = []  # Store voxel maps for all images
+        unique_voxel_labels_list = []  # Store unique voxel labels for all images
 
         for prefix in image_list:
             # Start timing for this image processing
             start_time = time.time()
 
-            df = process_image_with_metrics_and_lbp_and_obstacle_classification(
+            # Process the image to get features, voxel map, and unique voxel labels
+            df, voxel_map, unique_voxel_labels = process_image_with_metrics_and_lbp_and_obstacle_classification(
                 prefix, lidar_dir, labels_dir, csv_file, label_mapping, z_threshold=z_threshold,
-                voxel_size=5, num_voxels=num_voxels, k_neighbors=k_neighbors, min_len=min_len,
+                voxel_size=voxel_size, num_voxels=num_voxels, k_neighbors=k_neighbors, min_len=min_len,
                 proportion_threshold=proportion_threshold)
 
             # End timing for this image processing
-            end_time = time.time()
-            elapsed_time = end_time - start_time
+            elapsed_time = time.time() - start_time
             print(f"Time taken for image {prefix}: {elapsed_time:.4f} seconds")
 
             dfs.append(df)
+            voxel_maps.append(voxel_map)
+            unique_voxel_labels_list.append(unique_voxel_labels)
 
+        # Combine all DataFrames for training
         combined_df = pd.concat(dfs, ignore_index=True)
         X = combined_df.drop(columns=['Class', 'Category'])
         y = combined_df['Category']
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
+        # Train on all combined data
         clf = RandomForestClassifier(n_estimators=100)
-        clf.fit(X_train, y_train)
-        prediction_start_time = time.time()
+        clf.fit(X, y)
 
-        y_pred = clf.predict(X_test)
+        # Predict only on the first image
+        first_image_df = dfs[0]  # Features for the first image
+        X_first_image = first_image_df.drop(columns=['Class', 'Category'])
+        y_pred = clf.predict(X_first_image)  # Predict only for the first image
 
-        # End timing for prediction
-        prediction_end_time = time.time()
-        prediction_elapsed_time = prediction_end_time - prediction_start_time
-        print(f"Time taken for Random Forest prediction: {prediction_elapsed_time:.4f} seconds")
+        print(f"Rows in dfs[0]: {len(dfs[0])}")
+        print(f"Voxels in unique_voxel_labels_list[0]: {len(unique_voxel_labels_list[0])}")
 
-        accuracy = accuracy_score(y_test, y_pred)
+        # Create a cost map using predictions for the first image
+        create_cost_map_with_predictions(voxel_maps[0], y_pred, unique_voxel_labels_list[0])
+
+        # Save the predictions for the first image to a CSV
+        first_image_df['Predicted_Category'] = y_pred
+        first_image_df.to_csv(os.path.join(output_dir, f'first_image_predictions.csv'), index=False)
+
+        # Evaluate and log metrics for the entire combined dataset
+        y_pred_combined = clf.predict(X)
+        accuracy = accuracy_score(y, y_pred_combined)
         location_accuracies[location_name].append(accuracy)
 
-        # Capture and print classification metrics as usual
-        class_report = classification_report(y_test, y_pred, output_dict=True)
+        # Capture and print classification metrics
+        class_report = classification_report(y, y_pred_combined, output_dict=True)
         print(class_report)
         metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
 
@@ -454,11 +460,11 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         with open(params_file_path, "a") as file:
             file.write(metrics_text)
 
-        # Plot confusion matrix for each iteration
-        conf_matrix = confusion_matrix(y_test, y_pred)
+        # Plot confusion matrix for the combined predictions
+        conf_matrix = confusion_matrix(y, y_pred_combined)
         plt.figure(figsize=(10, 7))
-        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y_test),
-                    yticklabels=np.unique(y_test))
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y),
+                    yticklabels=np.unique(y))
         plt.title(f'Confusion Matrix - Iteration {i + 1}')
         plt.xlabel('Predicted Label')
         plt.ylabel('True Label')
@@ -474,11 +480,11 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
             'Classification Report': class_report
         })
 
-        combined_df.to_csv(os.path.join(output_dir, f'iteration_{i + 1}_real_data.csv'), index=False)
-
     # Save final results as a summary CSV
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(output_dir, 'classification_real_data_results.csv'), index=False)
+
+
 
 
 def plot_f1_recall_by_label(f1_scores, recall_scores):
@@ -630,13 +636,13 @@ if __name__ == "__main__":
         '2023-05-17_neubiberg_sunny__0383_1684329748563080364',
     ]
 
-    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, labels_dir, csv_file, image_list,
-                                                                  label_mapping, iterations=1, num_voxels=1000,
-                                                                    k_neighbors=5)
-
-    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
-    #                                                                label_mapping, iterations=1, num_voxels=1000,
+    #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir, labels_dir, csv_file, image_list,
+    #                                                              label_mapping, iterations=1, num_voxels=1000,
     #                                                                k_neighbors=5)
+
+    run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir2, labels_dir2, csv_file, image_list2,
+                                                                    label_mapping, iterations=1, num_voxels=1500,
+                                                                    k_neighbors=5)
 
     #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
     #                                                                label_mapping, iterations=1, num_voxels=1000,
