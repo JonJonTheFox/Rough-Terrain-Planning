@@ -1,3 +1,8 @@
+# UNUSED SCRIPT
+# This script is intended for comparing segmentation analysis.
+# It is currently not utilized in the main pipeline and serves as a placeholder 
+# for potential future work on segmentation model comparison.
+
 import time
 import numpy as np
 import pandas as pd
