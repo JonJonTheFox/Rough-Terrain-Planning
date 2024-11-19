@@ -74,7 +74,7 @@ def map_labels_to_categories(label_mapping, label_key):
     passable_labels = {'asphalt', 'cobble', 'gravel', 'sidewalk', 'soil', 'low_grass'}
     if label_key not in label_mapping:
         print(f"Warning: label_key {label_key} not found in label_mapping. Assigning to 'other' category.")
-        return 8
+        return -1
     if label_mapping[label_key] in obstacle_labels:
         return 0
     elif label_mapping[label_key] == 'cobble':
@@ -92,7 +92,7 @@ def map_labels_to_categories(label_mapping, label_key):
     elif label_mapping[label_key] == 'snow':
         return 7
     else:
-        return 8
+        return -1
 
 
 
@@ -203,38 +203,69 @@ def compute_intensity_features(point_cloud):
 # Combined function to compute all properties for a given point cloud
 # Other imports and functions remain unchanged
 
-def create_cost_map_with_predictions(voxel_map, predictions, unique_voxel_labels):
+def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, unique_voxel_labels):
     """
-    Creates and visualizes a 2D cost map based on predicted passability values using the voxel map.
+    Visualizes predictions and ground truth (categories) side-by-side using imshow.
 
     Parameters:
     - voxel_map (dict): Map of voxel label to voxel center (X, Y).
-    - unique_voxel_labels (np.ndarray): Array of unique voxel labels.
     - predictions (np.ndarray): Array of predicted categories (1 for passable, 0 for non-passable).
+    - categories (np.ndarray): Array of ground truth categories.
+    - unique_voxel_labels (np.ndarray): Array of unique voxel labels.
     """
-    # Ensure we filter `unique_voxel_labels` to include only those with predictions
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Ensure data consistency
     if len(predictions) < len(unique_voxel_labels):
         unique_voxel_labels = unique_voxel_labels[:len(predictions)]
     elif len(predictions) > len(unique_voxel_labels):
         predictions = predictions[:len(unique_voxel_labels)]
+
+    if len(categories) < len(unique_voxel_labels):
+        unique_voxel_labels = unique_voxel_labels[:len(categories)]
+    elif len(categories) > len(unique_voxel_labels):
+        categories = categories[:len(unique_voxel_labels)]
 
     # Extract voxel centers
     voxel_centers = np.array([voxel_map[label] for label in unique_voxel_labels])
     x_coords = voxel_centers[:, 0]
     y_coords = voxel_centers[:, 1]
 
-    # Create scatter plot
-    plt.figure(figsize=(12, 10))
-    scatter = plt.scatter(x_coords, y_coords, c=predictions, cmap='YlGnBu', s=50, edgecolors='k', alpha=0.7)
+    # Find the bounds of the cost map
+    x_min, x_max = int(np.min(x_coords)), int(np.max(x_coords))
+    y_min, y_max = int(np.min(y_coords)), int(np.max(y_coords))
 
-    # Add colorbar and labels
-    plt.colorbar(scatter, label="Predicted Cost")
-    plt.title("Predicted Passability Cost Map")
-    plt.xlabel("X Coordinate")
-    plt.ylabel("Y Coordinate")
-    plt.axis("equal")
-    plt.grid(True, linestyle='--', alpha=0.5)
+    # Create grids for predictions and ground truth
+    grid_shape = (y_max - y_min + 1, x_max - x_min + 1)
+    prediction_grid = np.full(grid_shape, np.nan)
+    ground_truth_grid = np.full(grid_shape, np.nan)
+
+    # Fill the grids
+    for (x, y), pred, cat in zip(voxel_centers, predictions, categories):
+        prediction_grid[int(y) - y_min, int(x) - x_min] = pred
+        ground_truth_grid[int(y) - y_min, int(x) - x_min] = cat
+
+    # Plot side-by-side visualizations
+    fig, axs = plt.subplots(1, 2, figsize=(18, 8))
+
+    # Predictions
+    im1 = axs[0].imshow(prediction_grid, origin="lower", cmap="YlGnBu", extent=[x_min, x_max, y_min, y_max], alpha=0.8)
+    axs[0].set_title("Predicted Categories")
+    axs[0].set_xlabel("X Coordinate")
+    axs[0].set_ylabel("Y Coordinate")
+    plt.colorbar(im1, ax=axs[0], label="Predicted Category")
+
+    # Ground Truth
+    im2 = axs[1].imshow(ground_truth_grid, origin="lower", cmap="YlGnBu", extent=[x_min, x_max, y_min, y_max], alpha=0.8)
+    axs[1].set_title("Ground Truth Categories")
+    axs[1].set_xlabel("X Coordinate")
+    axs[1].set_ylabel("Y Coordinate")
+    plt.colorbar(im2, ax=axs[1], label="Ground Truth Category")
+
+    plt.tight_layout()
     plt.show()
+
 
 
 
@@ -396,57 +427,50 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         unique_voxel_labels_list = []  # Store unique voxel labels for all images
 
         for prefix in image_list:
-            # Start timing for this image processing
-            start_time = time.time()
-
-            # Process the image to get features, voxel map, and unique voxel labels
+            # Process each image to get features, voxel map, and unique voxel labels
             df, voxel_map, unique_voxel_labels = process_image_with_metrics_and_lbp_and_obstacle_classification(
                 prefix, lidar_dir, labels_dir, csv_file, label_mapping, z_threshold=z_threshold,
                 voxel_size=voxel_size, num_voxels=num_voxels, k_neighbors=k_neighbors, min_len=min_len,
                 proportion_threshold=proportion_threshold)
 
-            # End timing for this image processing
-            elapsed_time = time.time() - start_time
-            print(f"Time taken for image {prefix}: {elapsed_time:.4f} seconds")
-
             dfs.append(df)
             voxel_maps.append(voxel_map)
             unique_voxel_labels_list.append(unique_voxel_labels)
 
-        # Combine all DataFrames for training
-        combined_df = pd.concat(dfs, ignore_index=True)
-        X = combined_df.drop(columns=['Class', 'Category'])
-        y = combined_df['Category']
+        # Split data: the first image is for testing, and the rest are for training
+        test_df = dfs[0]
+        train_df = pd.concat(dfs[1:], ignore_index=True)
 
-        # Train on all combined data
-        clf = RandomForestClassifier(n_estimators=100)
-        clf.fit(X, y)
+        # Separate features and labels for training and testing
+        X_train = train_df.drop(columns=['Class', 'Category'])
+        y_train = train_df['Category']
+        X_test = test_df.drop(columns=['Class', 'Category'])
+        y_test = test_df['Category']
 
-        # Predict only on the first image
-        first_image_df = dfs[0]  # Features for the first image
-        X_first_image = first_image_df.drop(columns=['Class', 'Category'])
-        y_pred = clf.predict(X_first_image)  # Predict only for the first image
+        # Train the model
+        clf = RandomForestClassifier(n_estimators=100, random_state=42)
+        clf.fit(X_train, y_train)
 
-        print(f"Rows in dfs[0]: {len(dfs[0])}")
-        print(f"Voxels in unique_voxel_labels_list[0]: {len(unique_voxel_labels_list[0])}")
+        # Predict on the test set
+        y_pred = clf.predict(X_test)
 
-        # Create a cost map using predictions for the first image
-        create_cost_map_with_predictions(voxel_maps[0], y_pred, unique_voxel_labels_list[0])
-
-        # Save the predictions for the first image to a CSV
-        first_image_df['Predicted_Category'] = y_pred
-        first_image_df.to_csv(os.path.join(output_dir, f'first_image_predictions.csv'), index=False)
-
-        # Evaluate and log metrics for the entire combined dataset
-        y_pred_combined = clf.predict(X)
-        accuracy = accuracy_score(y, y_pred_combined)
+        # Evaluate the performance on the test set
+        accuracy = accuracy_score(y_test, y_pred)
         location_accuracies[location_name].append(accuracy)
 
-        # Capture and print classification metrics
-        class_report = classification_report(y, y_pred_combined, output_dict=True)
-        print(class_report)
-        metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
+        # Save predictions for the test set
+        test_df['Predicted_Category'] = y_pred
+        test_df.to_csv(os.path.join(output_dir, f'first_image_predictions.csv'), index=False)
 
+        # Capture and print classification metrics
+        class_report = classification_report(y_test, y_pred, output_dict=True)
+        print(class_report)
+
+        # Visualize predictions and ground truth for the test image
+        visualize_predictions_and_ground_truth(voxel_maps[0], y_pred, y_test.to_numpy(), unique_voxel_labels_list[0])
+
+        # Save the classification report to a text file
+        metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
         for label, metrics in class_report.items():
             if label in {'accuracy', 'macro avg', 'weighted avg'}:
                 continue
@@ -456,20 +480,18 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
             f1_scores[location_name].append(f1_score)
             recall_scores[location_name].append(recall)
 
-        # Append metrics to text file
         with open(params_file_path, "a") as file:
             file.write(metrics_text)
 
-        # Plot confusion matrix for the combined predictions
-        conf_matrix = confusion_matrix(y, y_pred_combined)
+        # Plot confusion matrix for the test predictions
+        conf_matrix = confusion_matrix(y_test, y_pred)
         plt.figure(figsize=(10, 7))
-        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y),
-                    yticklabels=np.unique(y))
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y_test),
+                    yticklabels=np.unique(y_test))
         plt.title(f'Confusion Matrix - Iteration {i + 1}')
         plt.xlabel('Predicted Label')
         plt.ylabel('True Label')
-        sanitized_lidar_dir = lidar_dir.replace('/', '_').replace('..', '_')
-        plot_filename = os.path.join(output_dir, f'confusion_matrix_{i + 1}_{sanitized_lidar_dir}.png')
+        plot_filename = os.path.join(output_dir, f'confusion_matrix_{i + 1}.png')
         plt.savefig(plot_filename)
         plt.close()
 
@@ -483,6 +505,7 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     # Save final results as a summary CSV
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(output_dir, 'classification_real_data_results.csv'), index=False)
+
 
 
 
