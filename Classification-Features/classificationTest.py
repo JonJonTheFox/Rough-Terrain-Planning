@@ -3,6 +3,8 @@ from cProfile import label
 
 from matplotlib import pyplot as plt
 import seaborn as sns
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
 from Voxelization import voxel3d as v3d
 import PlaneFitting.plane_Fitting as pf
 import os
@@ -74,25 +76,25 @@ def map_labels_to_categories(label_mapping, label_key):
     passable_labels = {'asphalt', 'cobble', 'gravel', 'sidewalk', 'soil', 'low_grass'}
     if label_key not in label_mapping:
         print(f"Warning: label_key {label_key} not found in label_mapping. Assigning to 'other' category.")
-        return -1
-    if label_mapping[label_key] in obstacle_labels:
         return 0
-    elif label_mapping[label_key] == 'cobble':
+    if label_mapping[label_key] in obstacle_labels:
         return 1
-    elif label_mapping[label_key] == 'gravel':
+    elif label_mapping[label_key] == 'cobble':
         return 2
-    elif label_mapping[label_key] == 'sidewalk':
+    elif label_mapping[label_key] == 'gravel':
         return 3
-    elif label_mapping[label_key] == 'soil':
+    elif label_mapping[label_key] == 'sidewalk':
         return 4
-    elif label_mapping[label_key] == 'high_grass':
+    elif label_mapping[label_key] == 'soil':
         return 5
-    elif label_mapping[label_key] == 'low_grass':
+    elif label_mapping[label_key] == 'high_grass':
         return 6
-    elif label_mapping[label_key] == 'snow':
+    elif label_mapping[label_key] == 'low_grass':
         return 7
+    elif label_mapping[label_key] == 'snow':
+        return 8
     else:
-        return -1
+        return 0
 
 
 
@@ -203,20 +205,17 @@ def compute_intensity_features(point_cloud):
 # Combined function to compute all properties for a given point cloud
 # Other imports and functions remain unchanged
 
-def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, unique_voxel_labels):
+def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, unique_voxel_labels, label_mapping):
     """
     Visualizes predictions and ground truth (categories) side-by-side using imshow.
 
     Parameters:
     - voxel_map (dict): Map of voxel label to voxel center (X, Y).
-    - predictions (np.ndarray): Array of predicted categories (1 for passable, 0 for non-passable).
-    - categories (np.ndarray): Array of ground truth categories.
+    - predictions (np.ndarray): Array of predicted categories (mapped).
+    - categories (np.ndarray): Array of ground truth categories (raw labels to be mapped).
     - unique_voxel_labels (np.ndarray): Array of unique voxel labels.
+    - label_mapping (dict): Mapping from raw labels to categories (0-7).
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    # Ensure data consistency
     if len(predictions) < len(unique_voxel_labels):
         unique_voxel_labels = unique_voxel_labels[:len(predictions)]
     elif len(predictions) > len(unique_voxel_labels):
@@ -227,7 +226,7 @@ def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, u
     elif len(categories) > len(unique_voxel_labels):
         categories = categories[:len(unique_voxel_labels)]
 
-    # Extract voxel centers
+        # Extract voxel centers
     voxel_centers = np.array([voxel_map[label] for label in unique_voxel_labels])
     x_coords = voxel_centers[:, 0]
     y_coords = voxel_centers[:, 1]
@@ -246,28 +245,49 @@ def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, u
         prediction_grid[int(y) - y_min, int(x) - x_min] = pred
         ground_truth_grid[int(y) - y_min, int(x) - x_min] = cat
 
+    # Define category labels for the legend
+    category_labels = {
+        0: "Other",
+        1: "Obstacle",
+        2: "Cobble",
+        3: "Gravel",
+        4: "Sidewalk",
+        5: "Soil",
+        6: "High Grass",
+        7: "Low Grass",
+        8: "Snow"
+    }
+
     # Plot side-by-side visualizations
     fig, axs = plt.subplots(1, 2, figsize=(18, 8))
 
+    category_colors = [
+        "white", "red", "blue", "green", "yellow", "orange", "purple", "brown", "black"
+    ]  # Replace with meaningful colors
+    cmap = ListedColormap(category_colors)
+    norm = BoundaryNorm(range(len(category_labels) + 1), cmap.N)
+
     # Predictions
-    im1 = axs[0].imshow(prediction_grid, origin="lower", cmap="YlGnBu", extent=[x_min, x_max, y_min, y_max], alpha=0.8)
+    im1 = axs[0].imshow(prediction_grid, origin="lower", cmap=cmap, norm=norm, extent=[x_min, x_max, y_min, y_max],
+                        alpha=0.8)
     axs[0].set_title("Predicted Categories")
     axs[0].set_xlabel("X Coordinate")
     axs[0].set_ylabel("Y Coordinate")
-    plt.colorbar(im1, ax=axs[0], label="Predicted Category")
+    cbar1 = plt.colorbar(im1, ax=axs[0], orientation='horizontal', pad=0.2)
+    cbar1.set_ticks(range(len(category_labels)))
+    cbar1.set_ticklabels(list(category_labels.values()))
+    cbar1.set_label("Predicted Category")
 
     # Ground Truth
-    im2 = axs[1].imshow(ground_truth_grid, origin="lower", cmap="YlGnBu", extent=[x_min, x_max, y_min, y_max], alpha=0.8)
+    im2 = axs[1].imshow(ground_truth_grid, origin="lower", cmap=cmap, norm=norm, extent=[x_min, x_max, y_min, y_max],
+                        alpha=0.8)
     axs[1].set_title("Ground Truth Categories")
     axs[1].set_xlabel("X Coordinate")
     axs[1].set_ylabel("Y Coordinate")
-    plt.colorbar(im2, ax=axs[1], label="Ground Truth Category")
-
-    plt.tight_layout()
-    plt.show()
-
-
-
+    cbar2 = plt.colorbar(im2, ax=axs[1], orientation='horizontal', pad=0.2)
+    cbar2.set_ticks(range(len(category_labels)))
+    cbar2.set_ticklabels(list(category_labels.values()))
+    cbar2.set_label("Ground Truth Category")
 
 
 
@@ -467,7 +487,7 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         print(class_report)
 
         # Visualize predictions and ground truth for the test image
-        visualize_predictions_and_ground_truth(voxel_maps[0], y_pred, y_test.to_numpy(), unique_voxel_labels_list[0])
+        visualize_predictions_and_ground_truth(voxel_maps[0], y_pred, y_test.to_numpy(), unique_voxel_labels_list[0], label_mapping)
 
         # Save the classification report to a text file
         metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
@@ -669,7 +689,7 @@ if __name__ == "__main__":
 
     #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir3, labels_dir3, csv_file, image_list3,
     #                                                                label_mapping, iterations=1, num_voxels=1000,
-    #                                                                k_neighbors=5)
+    #                                                               k_neighbors=5)
 
     #run_single_image_list_test_with_lbp_and_obstacle_classification(lidar_dir4, labels_dir4, csv_file, image_list4,
     #                                                                label_mapping, iterations=1, num_voxels=1000, k_neighbors=5)
