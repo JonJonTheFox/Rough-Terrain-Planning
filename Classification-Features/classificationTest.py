@@ -1,10 +1,7 @@
-import time
-from cProfile import label
-
 from matplotlib import pyplot as plt
 import seaborn as sns
 from matplotlib.colors import ListedColormap, BoundaryNorm
-
+import time
 from Voxelization import voxel3d as v3d
 import PlaneFitting.plane_Fitting as pf
 import os
@@ -291,31 +288,34 @@ def visualize_predictions_and_ground_truth(voxel_map, predictions, categories, u
 
 
 
-
-def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar_dir, labels_dir, csv_file,
-                                                                   label_mapping, z_threshold=100, voxel_size=5,
-                                                                   num_voxels=100000, k_neighbors=6,
-                                                                   min_len=0, proportion_threshold=0.0):
+def process_image_with_metrics_and_lbp_and_obstacle_classification(
+        prefix, lidar_dir, labels_dir, csv_file, label_mapping, z_threshold=100, voxel_size=5,
+        num_voxels=100000, k_neighbors=6, min_len=0, proportion_threshold=0.0, max_voxels=None):
     # Load point cloud and labels
+    total_start_time = time.time()
     lidar_data, labels, label_metadata = pf.load_pointcloud_and_labels(prefix, lidar_dir, labels_dir, csv_file)
     pointcloud, labels = pf.apply_threshold(lidar_data, labels, z_threshold)
 
     # Voxelize the point cloud
     voxel_labels, voxel_map, unique_voxel_labels = v3d.voxelize_point_cloud_2d(pointcloud, voxel_size=voxel_size)
 
+    # If max_voxels is set, limit the number of voxels to process
+    if max_voxels:
+        unique_voxel_labels = unique_voxel_labels[:max_voxels]
+
     retained_points = 0
     # Initialize mappings
     voxel_to_points = {voxel_label: [] for voxel_label in unique_voxel_labels}
     for idx, voxel_label in enumerate(voxel_labels):
-        voxel_to_points[voxel_label].append(idx)
+        if voxel_label in voxel_to_points:
+            voxel_to_points[voxel_label].append(idx)
 
-    # Lists to hold computed features
-    all_voxel_rmse, num_points_list, density_list, lbp_list, majority_labels, class_categories = [], [], [], [], [], []
-    densities, pca_var_pc1, pca_var_pc2, pca_var_pc3, flatnesses, elongations, \
-        height_variabilities, skewnesses, mean_nn_distances, mean_intensities, std_intensities, \
-        skew_intensities = [], [], [], [], [], [], [], [], [], [], [], [],
+    # Initialize lists for features
+    all_voxel_rmse, majority_labels, class_categories = [], [], []
+    pca_var_pc3, flatnesses, elongations, height_variabilities = [], [], [], []
 
-    voxel_volume = voxel_size ** 3
+    # Dictionary for timing information
+    feature_times = {}
 
     for voxel_label, point_indices in voxel_to_points.items():
         points_in_voxel = pointcloud[point_indices]
@@ -331,71 +331,70 @@ def process_image_with_metrics_and_lbp_and_obstacle_classification(prefix, lidar
         if majority_proportion < proportion_threshold:
             continue
 
-        # Calculate features
         retained_points += len(points_in_voxel)
-        voxel_planes_, rmse_ = pf.compute_voxel_planes(points_in_voxel, np.array([voxel_label] * len(points_in_voxel)))  # Example RMSE computation
-        lbp_patterns = apply_dynamic_lbp_to_voxels(points_in_voxel, labels_in_voxel, voxel_labels[point_indices],
-                                                   k_neighbors=k_neighbors)
+
+        # Calculate features (example: PCA, RMSE)
+        start_time = time.time()
+        _, rmse_ = pf.compute_voxel_planes(points_in_voxel, np.array([voxel_label] * len(points_in_voxel)))
+        feature_times.setdefault('Voxel Planes RMSE', 0)
+        feature_times['Voxel Planes RMSE'] += time.time() - start_time
 
         if voxel_label not in rmse_:
             continue
 
         rmse_value = rmse_[voxel_label]
         all_voxel_rmse.append(rmse_value)
-        num_points_list.append(retained_points)
-        density_list.append(retained_points / voxel_volume)
         majority_labels.append(majority_label)
-        lbp_value = lbp_patterns.get(voxel_label, 0)
-        lbp_list.append(lbp_value)
         class_categories.append(map_labels_to_categories(label_mapping, majority_label))
 
-        # Additional features
-        #convex_hull_volumes.append(compute_convex_hull_volume(points_in_voxel))
-        densities.append(compute_density(points_in_voxel))
+        # PCA features
+        start_time = time.time()
         variance_ratios, flatness, elongation = compute_pca(points_in_voxel)
-        pca_var_pc1.append(variance_ratios[0])
-        pca_var_pc2.append(variance_ratios[1])
+        feature_times.setdefault('PCA Calculation', 0)
+        feature_times['PCA Calculation'] += time.time() - start_time
+
         pca_var_pc3.append(variance_ratios[2])
         flatnesses.append(flatness)
         elongations.append(elongation)
-        #roughnesses.append(compute_surface_roughness(points_in_voxel))
+
+        # Height variability
+        start_time = time.time()
         height_var, skewness = compute_height_variability(points_in_voxel)
+        feature_times.setdefault('Height Variability Calculation', 0)
+        feature_times['Height Variability Calculation'] += time.time() - start_time
+
         height_variabilities.append(height_var)
-        #skewnesses.append(skewness)
-        #curvatures.append(compute_curvature(points_in_voxel))
-        mean_nn_distances.append(compute_mean_nearest_neighbor_distance(points_in_voxel))
-        mean_intensity, std_intensity, skew_intensity = compute_intensity_features(points_in_voxel)
-        mean_intensities.append(mean_intensity)
-        std_intensities.append(std_intensity)
-        #skew_intensities.append(skew_intensity)
+
+        # Stop processing further voxels if max_voxels is reached
+        if max_voxels and len(all_voxel_rmse) >= max_voxels:
+            break
+
+    total_preprocessing_time = time.time() - total_start_time
+    print(f"Total preprocessing time for point cloud: {total_preprocessing_time:.2f} seconds")
 
     # Create DataFrame
     data = {
         'RMSE': all_voxel_rmse,
-        'Num_Points': num_points_list,
-        'Density': density_list,
-        'LBP': lbp_list,
         'Class': majority_labels,
         'Category': class_categories,
-        #'ConvexHullVolume': convex_hull_volumes,
-        'PCA_Var_PC1': pca_var_pc1,
-        'PCA_Var_PC2': pca_var_pc2,
         'PCA_Var_PC3': pca_var_pc3,
         'Flatness': flatnesses,
         'Elongation': elongations,
-        #'SurfaceRoughness': roughnesses,
         'HeightVariability': height_variabilities,
-        #'HeightSkewness': skewnesses,
-        #'Curvature': curvatures,
-        'MeanNN_Distance': mean_nn_distances,
-        'MeanIntensity': mean_intensities,
-        'StdIntensity': std_intensities,
-        #'SkewIntensity': skew_intensities
     }
     df = pd.DataFrame(data)
 
-    return df, voxel_map, unique_voxel_labels
+    # Log timing information
+    for feature, total_time in feature_times.items():
+        print(f"Feature '{feature}' took {total_time:.2f} seconds in total.")
 
+    return df, voxel_map, unique_voxel_labels, feature_times
+
+
+from collections import defaultdict
+
+# Add this new dictionary for precision scores
+precision_scores = defaultdict(list)
 
 def run_single_image_list_test_with_lbp_and_obstacle_classification(
         lidar_dir, labels_dir, csv_file, image_list, label_mapping, iterations=1, num_voxels=1000, k_neighbors=5,
@@ -404,7 +403,6 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     output_dir = f"classificationTest_{timestamp}_{os.path.basename(lidar_dir)}"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Prepare initial parameters text
     params_text = f"""
         Classification Test Parameters:
 
@@ -438,21 +436,21 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
     if location_name not in location_accuracies:
         location_accuracies[location_name] = []
 
-    # Proceed with the classification and record timing
     results = []
     for i in range(iterations):
         print(f"Running real data test iteration {i + 1}/{iterations}...")
         dfs = []
         voxel_maps = []  # Store voxel maps for all images
-        unique_voxel_labels_list = []  # Store unique voxel labels for all images
+        unique_voxel_labels_list = []
+        average_times = []# Store unique voxel labels for all images
 
         for prefix in image_list:
-            # Process each image to get features, voxel map, and unique voxel labels
-            df, voxel_map, unique_voxel_labels = process_image_with_metrics_and_lbp_and_obstacle_classification(
+            df, voxel_map, unique_voxel_labels, times = process_image_with_metrics_and_lbp_and_obstacle_classification(
                 prefix, lidar_dir, labels_dir, csv_file, label_mapping, z_threshold=z_threshold,
                 voxel_size=voxel_size, num_voxels=num_voxels, k_neighbors=k_neighbors, min_len=min_len,
                 proportion_threshold=proportion_threshold)
 
+            average_times.append(times)
             dfs.append(df)
             voxel_maps.append(voxel_map)
             unique_voxel_labels_list.append(unique_voxel_labels)
@@ -486,24 +484,31 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         class_report = classification_report(y_test, y_pred, output_dict=True)
         print(class_report)
 
-        # Visualize predictions and ground truth for the test image
-        visualize_predictions_and_ground_truth(voxel_maps[0], y_pred, y_test.to_numpy(), unique_voxel_labels_list[0], label_mapping)
-
-        # Save the classification report to a text file
-        metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
+        # Save F1, Recall, and Precision scores
         for label, metrics in class_report.items():
             if label in {'accuracy', 'macro avg', 'weighted avg'}:
                 continue
             f1_score = metrics['f1-score']
             recall = metrics['recall']
-            metrics_text += f"Label {label}:\n  - F1 Score: {f1_score:.4f}\n  - Recall: {recall:.4f}\n\n"
+            precision = metrics['precision']
             f1_scores[location_name].append(f1_score)
             recall_scores[location_name].append(recall)
+            precision_scores[location_name].append(precision)
+
+        # Save classification metrics to a text file
+        metrics_text = f"\nIteration {i + 1} Metrics:\n- Accuracy: {accuracy:.4f}\n\n"
+        for label, metrics in class_report.items():
+            if label in {'accuracy', 'macro avg', 'weighted avg'}:
+                continue
+            metrics_text += f"Label {label}:\n  - F1 Score: {metrics['f1-score']:.4f}\n  - Recall: {metrics['recall']:.4f}\n  - Precision: {metrics['precision']:.4f}\n\n"
 
         with open(params_file_path, "a") as file:
             file.write(metrics_text)
 
-        # Plot confusion matrix for the test predictions
+        # Visualize predictions and ground truth for the test image
+        visualize_predictions_and_ground_truth(voxel_maps[0], y_pred, y_test.to_numpy(), unique_voxel_labels_list[0], label_mapping)
+
+        # Plot confusion matrix
         conf_matrix = confusion_matrix(y_test, y_pred)
         plt.figure(figsize=(10, 7))
         sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y_test),
@@ -515,7 +520,8 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
         plt.savefig(plot_filename)
         plt.close()
 
-        # Append results to overall metrics
+        plot_average_feature_times(average_times)
+
         results.append({
             'Iteration': i + 1,
             'Accuracy': accuracy,
@@ -528,15 +534,43 @@ def run_single_image_list_test_with_lbp_and_obstacle_classification(
 
 
 
-
-
-def plot_f1_recall_by_label(f1_scores, recall_scores):
+def plot_average_feature_times(all_feature_times):
     """
-    Plots F1 and Recall scores for each label across different datasets using specific category labels.
+    Plots the average computation times for each feature.
+
+    Parameters:
+    - all_feature_times (list of dicts): List of average times per run for each feature.
+    """
+    # Combine all times into one dictionary with summed values
+    combined_times = defaultdict(list)
+    for feature_times in all_feature_times:
+        for feature, time in feature_times.items():
+            combined_times[feature].append(time)
+
+    # Compute the average time across runs for each feature
+    average_times = {feature: np.mean(times) for feature, times in combined_times.items()}
+
+    # Plot the average times
+    plt.figure(figsize=(10, 6))
+    plt.bar(average_times.keys(), average_times.values(), alpha=0.7)
+    plt.ylabel("Average Time (seconds)")
+    plt.xlabel("Feature")
+    plt.title("Average Feature Computation Times")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+def plot_f1_recall_precision_by_label(f1_scores, recall_scores, precision_scores):
+    """
+    Plots F1, Recall, and Precision scores for each label across different datasets using specific category labels.
 
     Parameters:
     - f1_scores (dict): Dictionary with dataset names as keys and lists of F1 scores for each category.
     - recall_scores (dict): Dictionary with dataset names as keys and lists of Recall scores for each category.
+    - precision_scores (dict): Dictionary with dataset names as keys and lists of Precision scores for each category.
     """
 
     # Define specific category labels as mapped in `map_labels_to_categories`
@@ -555,25 +589,28 @@ def plot_f1_recall_by_label(f1_scores, recall_scores):
     datasets = list(f1_scores.keys())
 
     for dataset in datasets:
-        # Get the F1 and recall scores for each category in this dataset, filling missing data with zeros
+        # Get the F1, Recall, and Precision scores for each category in this dataset, filling missing data with zeros
         f1_values = np.array(f1_scores[dataset] + [0] * (len(category_labels) - len(f1_scores[dataset])))
         recall_values = np.array(recall_scores[dataset] + [0] * (len(category_labels) - len(recall_scores[dataset])))
+        precision_values = np.array(precision_scores[dataset] + [0] * (len(category_labels) - len(precision_scores[dataset])))
 
-        # Plot F1 and recall scores
+        # Plot F1, Recall, and Precision scores
         plt.figure(figsize=(12, 6))
-        bar_width = 0.35
+        bar_width = 0.25
         index = np.arange(len(category_labels))
 
         plt.bar(index, f1_values, bar_width, label='F1 Score', alpha=0.7)
         plt.bar(index + bar_width, recall_values, bar_width, label='Recall', alpha=0.7)
+        plt.bar(index + 2 * bar_width, precision_values, bar_width, label='Precision', alpha=0.7)
 
         plt.xlabel('Categories')
         plt.ylabel('Score')
-        plt.title(f'F1 and Recall Scores for {dataset}')
-        plt.xticks(index + bar_width / 2, category_labels, rotation=45, ha='right')
+        plt.title(f'F1, Recall, and Precision Scores for {dataset}')
+        plt.xticks(index + bar_width, category_labels, rotation=45, ha='right')
         plt.legend()
         plt.tight_layout()
         plt.show()
+
 
 
 
@@ -712,7 +749,7 @@ if __name__ == "__main__":
     locations = list(location_accuracies.keys())
     accuracies = list(location_accuracies.values())
 
-    plot_f1_recall_by_label(f1_scores, recall_scores)
+    plot_f1_recall_precision_by_label(f1_scores, recall_scores, precision_scores)
 
 
 
